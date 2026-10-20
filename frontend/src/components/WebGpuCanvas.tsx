@@ -5,7 +5,7 @@ import { createDemoScene } from '../game/demo-scene'
 import './WebGpuCanvas.css'
 
 type WebGpuCanvasProps = {
-  createScene?: () => Scene
+  createScene?: (signal?: AbortSignal) => Scene | Promise<Scene>
   className?: string
   style?: CSSProperties
 }
@@ -34,7 +34,9 @@ export function WebGpuCanvas({
         }
 
         engine = created
-        engine.scene = createScene()
+        const scene = await createScene(abort.signal)
+        if (abort.signal.aborted) return
+        engine.scene = scene
         engine.start()
         setError(null)
       } catch (cause) {

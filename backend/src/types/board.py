@@ -1,5 +1,6 @@
 from enum import Enum, auto
 import math
+import random
 
 SQRT3: float = 3 ** 0.5
 
@@ -45,12 +46,12 @@ class Edge:
         return f"Edge [{status}] between ({self.node1.x:.2f}, {self.node1.y:.2f}) and ({self.node2.x:.2f}, {self.node2.y:.2f})"
 
 class Tile:
-    def __init__(self, i: int, j: int, landscape: Landscape, dice_number: int | None = None):
+    def __init__(self, i: int, j: int, landscape: Landscape, diceNumber: int | None = None):
         self.i = i
         self.j = j
         self.landscape = landscape
-        self.dice_number = dice_number
-        self.is_occupied_by_thief: bool = (landscape == Landscape.DESERT)
+        self.diceNumber = diceNumber
+        self.isOccupiedByThief: bool = (landscape == Landscape.DESERT)
         self.nodes: list[Node] = []
         self.edges: list[Edge] = []
     
@@ -61,38 +62,37 @@ class Tile:
     
     def __repr__(self):
         x, y = self.getActualCoordinates()
-        thief_str = " [THIEF]" if self.is_occupied_by_thief else ""
-        num_str = f" (Dice: {self.dice_number})" if self.dice_number else ""
-        return f"Tile({self.landscape.name}{num_str}){thief_str} at ({x:.2f}, {y:.2f})"
+        thiefStr = " [THIEF]" if self.isOccupiedByThief else ""
+        numStr = f" (Dice: {self.diceNumber})" if self.diceNumber else ""
+        return f"Tile({self.landscape.name}{numStr}){thiefStr} at ({x:.2f}, {y:.2f})"
 
 class Board:
-    def __init__(self, board_size: int = 3):
-        self.board_size = board_size
+    def __init__(self, boardSize: int = 3):
+        self.boardSize = boardSize
         self.tiles: list[Tile] = []
-        self.nodes_map: dict[tuple[float, float], Node] = {}
+        self.nodesMap: dict[tuple[float, float], Node] = {}
         self.edges: list[Edge] = []
         self.buildBoard()
 
     def getOrCreateNode(self, x: float, y: float, tolerance: float = 1e-2) -> Node:
         """Ensures nodes that touch multiple tiles are shared instances."""
-        for (nx, ny), node in self.nodes_map.items():
+        for (nx, ny), node in self.nodesMap.items():
             if math.hypot(nx - x, ny - y) < tolerance:
                 return node
-        new_node = Node(x, y)
-        self.nodes_map[(x, y)] = new_node
-        return new_node
+        newNode = Node(x, y)
+        self.nodesMap[(x, y)] = newNode
+        return newNode
 
     def getOrCreateEdge(self, node1: Node, node2: Node) -> Edge:
         """Ensures edges are shared between adjacent tiles."""
         for edge in self.edges:
             if {edge.node1, edge.node2} == {node1, node2}:
                 return edge
-        new_edge = Edge(node1, node2)
-        self.edges.append(new_edge)
-        return new_edge
+        newEdge = Edge(node1, node2)
+        self.edges.append(newEdge)
+        return newEdge
 
     def buildBoard(self):
-        # Standard Catan resource distribution (19 tiles total)
         landscapes = [
             Landscape.FOREST, Landscape.FOREST, Landscape.FOREST, Landscape.FOREST,
             Landscape.PASTURE, Landscape.PASTURE, Landscape.PASTURE, Landscape.PASTURE,
@@ -101,24 +101,27 @@ class Board:
             Landscape.MOUNTAINS, Landscape.MOUNTAINS, Landscape.MOUNTAINS,
             Landscape.DESERT
         ]
+        for i in range(len(landscapes)):
+            j: int = random.randint(0, len(landscapes) - 1)
+            landscapes[i], landscapes[j] = landscapes[j], landscapes[i]
         diceNumbers = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11]
 
         # Generate axial coordinates for the board
         tileCoords: list[tuple[int, int]] = []
-        for i in range(-self.board_size + 1, self.board_size):
-            for j in range(max(-self.board_size + 1, -self.board_size - i + 1), min(self.board_size - i, self.board_size)):
+        for i in range(-self.boardSize + 1, self.boardSize):
+            for j in range(max(-self.boardSize + 1, -self.boardSize - i + 1), min(self.boardSize - i, self.boardSize)):
                 tileCoords.append((i, j))
 
-        ls_idx = 0
-        dice_idx = 0
+        lsIdx = 0
+        diceIdx = 0
 
         for i, j in tileCoords:
-            ls = landscapes[ls_idx % len(landscapes)]
-            ls_idx += 1
+            ls = landscapes[lsIdx % len(landscapes)]
+            lsIdx += 1
             
-            num = None if ls == Landscape.DESERT else diceNumbers[dice_idx % len(diceNumbers)]
+            num = None if ls == Landscape.DESERT else diceNumbers[diceIdx % len(diceNumbers)]
             if num is not None:
-                dice_idx += 1
+                diceIdx += 1
 
             tile = Tile(i, j, ls, num)
             
