@@ -1,0 +1,21 @@
+.webgpu-canvas {
+  position: relative;
+}
+
+.webgpu-canvas > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.webgpu-canvas-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  margin: 0;
+  padding: 24px;
+  background: #202020;
+  color: white;
+  text-align: center;
+}

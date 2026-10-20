@@ -1,0 +1,14 @@
+.app {
+  width: 100%;
+  height: 100svh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.game-canvas {
+  width: 95%;
+  height: 95%;
+  border-radius: 10px;
+  overflow: hidden;
+}
