@@ -18,9 +18,9 @@ function addHexTile(scene: Scene, i: number, j: number, color: Vec3) {
 }
 
 export async function createDemoScene(signal?: AbortSignal): Promise<Scene> {
-    const response = await fetch('/api/new-board', { method: 'POST', signal });
+    const response = await fetch('/api/board', { signal });
     if (!response.ok) {
-        throw new Error(`Failed to create board: ${response.status} ${response.statusText}`);
+        throw new Error(`Failed to load board: ${response.status} ${response.statusText}`);
     }
     const board: { tiles: { i: number; j: number; landscape: number }[] } = await response.json();
     const scene = new Scene(new Camera({ position: vec3.fromValues(0, 1, 5) }));

@@ -1,21 +1,9 @@
-from enum import Enum, auto
 import math
 import random
 
+from .enum import BuildingType, Landscape
+
 SQRT3: float = 3 ** 0.5
-
-class Landscape(Enum):
-    FOREST = auto()     # Wood / Lumber
-    HILLS = auto()      # Brick / Clay
-    PASTURE = auto()    # Wool / Sheep
-    FIELDS = auto()     # Grain / Wheat
-    MOUNTAINS = auto()  # Ore / Stone
-    DESERT = auto()     # Desert (no resources/number)
-
-class BuildingType(Enum):
-    NONE = auto()
-    SETTLEMENT = auto()
-    CITY = auto()
 
 class Player:
     def __init__(self, name: str, color: str):
