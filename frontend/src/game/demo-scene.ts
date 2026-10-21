@@ -3,6 +3,7 @@ import { Camera } from "../engine/camera";
 import { FlyCameraController } from "../engine/controllers/fly-camera-controller";
 import { Scene } from "../engine/scene";
 import { HexTile } from "./objects/hex-tile";
+import { Settlement } from "./objects/settlement";
 
 const sqrt3 = Math.sqrt(3);
 
@@ -39,6 +40,8 @@ export async function createDemoScene(signal?: AbortSignal): Promise<Scene> {
         const color = tileColors[tile.landscape] ?? vec3.fromValues(0.5, 0.5, 0.5);
         addHexTile(scene, tile.i, tile.j, color);
     });
+
+    scene.add(new Settlement({ position: vec3.fromValues(0, 0, 0) }));
 
     return scene;
 }

@@ -3,10 +3,7 @@ import type { Geometry } from "./geometry";
 
 const UNIFORM_SIZE = 64 + 64 + 48;
 
-/**
- * The drawable part of a SceneObject: a (possibly shared) geometry
- * plus the per-object uniforms used to draw it.
- */
+
 export class Mesh {
     geometry: Geometry;
 

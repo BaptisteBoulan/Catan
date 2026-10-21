@@ -1,6 +1,12 @@
 from enum import Enum, auto
 
 
+class Color(Enum):
+    RED = auto()
+    BLUE = auto()
+    GREEN = auto()
+    YELLOW = auto()
+
 class Resource(Enum):
     WOOD = "wood"
     BRICK = "brick"
