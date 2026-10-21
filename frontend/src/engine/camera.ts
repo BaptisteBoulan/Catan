@@ -24,9 +24,7 @@ export class Camera {
     far: number;
     aspect = 1;
 
-    /** Movement speed in units per second. */
     speed: number;
-    /** Radians per pixel of mouse movement. */
     sensitivity: number;
 
     private readonly up = vec3.fromValues(0, 1, 0);
@@ -35,9 +33,9 @@ export class Camera {
     private readonly viewProjection = mat4.identity();
 
     constructor(options: CameraOptions = {}) {
-        this.position = options.position ?? vec3.fromValues(0, 0, 4);
-        this.yaw = options.yaw ?? 0;
-        this.pitch = options.pitch ?? 0;
+        this.position = options.position ?? vec3.fromValues(3, 4, 3);
+        this.yaw = options.yaw ?? Math.PI / 4;
+        this.pitch = options.pitch ?? -Math.PI / 4;
         this.fov = options.fov ?? Math.PI / 3;
         this.near = options.near ?? 0.01;
         this.far = options.far ?? 100;

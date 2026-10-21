@@ -1,0 +1,19 @@
+import { vec3, type Vec3 } from "wgpu-matrix";
+import { Mesh } from "../../engine/mesh/mesh";
+import { createCube } from "../../engine/mesh/primitives/cube";
+import { SceneObject } from "../../engine/scene-object";
+
+export const ROAD_HEIGHT = 0.06;
+
+export class Road extends SceneObject {
+    constructor(start: Vec3, end: Vec3, color: Vec3) {
+        const dx = end[0] - start[0];
+        const dz = end[2] - start[2];
+        super({
+            mesh: new Mesh(createCube(1, color)),
+            position: vec3.lerp(start, end, 0.5),
+            rotation: vec3.fromValues(0, -Math.atan2(dz, dx), 0),
+            scale: vec3.fromValues(Math.hypot(dx, dz), ROAD_HEIGHT, 0.08),
+        });
+    }
+}

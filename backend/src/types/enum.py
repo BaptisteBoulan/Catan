@@ -2,10 +2,11 @@ from enum import Enum, auto
 
 
 class Color(Enum):
-    RED = auto()
-    BLUE = auto()
-    GREEN = auto()
-    YELLOW = auto()
+    RED = "red"
+    BLUE = "blue"
+    GREEN = "green"
+    YELLOW = "yellow"
+    WHITE = "white"
 
 class Resource(Enum):
     WOOD = "wood"
@@ -35,9 +36,9 @@ class Landscape(Enum):
 
 
 class BuildingType(Enum):
-    NONE = auto()
-    SETTLEMENT = auto()
-    CITY = auto()
+    NONE = "none"
+    SETTLEMENT = "settlement"
+    CITY = "city"
 
 
 class DevelopmentCard(Enum):

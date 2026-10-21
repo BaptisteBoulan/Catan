@@ -1,7 +1,8 @@
+import type { Vec3 } from "wgpu-matrix";
 import { Geometry } from "../geometry";
 
-/** Cube (side = `size`) centered on the origin, with one color per face. */
-export function createCube(size = 1): Geometry {
+/** Cube centered on the origin; omitting color keeps the default face colors. */
+export function createCube(size = 1, color?: Vec3): Geometry {
     const h = size / 2;
     const faces: { n: number[]; u: number[]; v: number[]; color: number[] }[] = [
         { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0], color: [1, 0, 0] },
@@ -18,13 +19,13 @@ export function createCube(size = 1): Geometry {
     const indices: number[] = [];
     const normals: number[] = [];
 
-    faces.forEach(({ n, u, v, color }, face) => {
+    faces.forEach(({ n, u, v, color: faceColor }, face) => {
         for (const [a, b] of corners) {
             for (let i = 0; i < 3; i++) {
                 positions.push(h * (n[i] + a * u[i] + b * v[i]));
                 normals.push(h * n[i]);
             }
-            colors.push(...color);
+            colors.push(...(color ?? faceColor));
         }
         const base = face * 4;
         indices.push(base, base + 1, base + 2, base, base + 2, base + 3);

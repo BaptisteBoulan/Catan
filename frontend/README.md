@@ -31,7 +31,10 @@ export function Board() {
 
 Give the component an explicit height (or a parent-relative height via CSS).
 It resizes the drawing buffer to its displayed size and device pixel ratio.
-By default it creates the original randomized hex board with the fly camera.
+By default it loads the randomized board from `/api/board` with the fly camera.
+Each player starts with a settlement and a city, each connected to one
+player-colored road along a tile edge. A light-blue circular water surface sits
+just beneath the board and scales with its size.
 To use another scene, pass a stable factory:
 
 ```tsx

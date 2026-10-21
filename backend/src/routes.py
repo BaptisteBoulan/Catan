@@ -1,26 +1,23 @@
 from fastapi import FastAPI
-from fastapi.encoders import jsonable_encoder as encoder
+from pydantic import BaseModel, Field
 
-from .types.board import Board
+from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game
 
 app = FastAPI()
 
-board = Board()
+game = Game()
 
-def serializeBoard(board: Board):
-	return encoder({
-		"boardSize": board.boardSize,
-		"tiles": board.tiles,
-		"nodes": list(board.nodesMap.values()),
-		"edges": board.edges,
-	})
+
+class NewBoardRequest(BaseModel):
+	playerCount: int = Field(default=4, ge=MIN_PLAYERS, le=MAX_PLAYERS)
+
 
 @app.get("/board")
 def getBoard():
-	return serializeBoard(board)
+	return game.serialize()
 
 @app.post("/new-board")
-def newBoard():
-	global board
-	board = Board()
-	return serializeBoard(board)
+def newBoard(request: NewBoardRequest):
+	global game
+	game = Game(playerCount=request.playerCount)
+	return game.serialize()

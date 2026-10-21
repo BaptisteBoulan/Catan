@@ -18,6 +18,7 @@ export type SceneObjectOptions = {
     position?: Vec3;
     rotation?: Vec3;
     scale?: Vec3;
+    color?: Vec3;
 };
 
 /**

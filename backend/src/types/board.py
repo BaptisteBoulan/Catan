@@ -2,21 +2,19 @@ import math
 import random
 
 from .enum import BuildingType, Landscape
+from .player import Player
 
 SQRT3: float = 3 ** 0.5
 
-class Player:
-    def __init__(self, name: str, color: str):
-        self.name = name
-        self.color = color
-
 class Node:
     """Represents a vertex where settlements or cities can be built."""
-    def __init__(self, x: float, y: float):
+    def __init__(self, id: int, x: float, y: float):
+        self.id = id
         self.x = x
         self.y = y
         self.building: BuildingType = BuildingType.NONE
         self.owner: Player | None = None
+        self.neighbors: set["Node"] = set()
 
     def __repr__(self):
         b_str = f"{self.building.name}" if self.building != BuildingType.NONE else "Empty"
@@ -44,8 +42,9 @@ class Tile:
         self.edges: list[Edge] = []
     
     def getActualCoordinates(self) -> tuple[float, float]:
-        x: float = self.i * 0.75
-        y: float = (self.j + 0.5) * (SQRT3 / 2)
+        # Flat-topped axial layout with unit radius (matches the frontend renderer).
+        x: float = self.i * 1.5
+        y: float = (self.j + self.i / 2) * SQRT3
         return (x, y)
     
     def __repr__(self):
@@ -67,9 +66,13 @@ class Board:
         for (nx, ny), node in self.nodesMap.items():
             if math.hypot(nx - x, ny - y) < tolerance:
                 return node
-        newNode = Node(x, y)
+        newNode = Node(len(self.nodesMap), x, y)
         self.nodesMap[(x, y)] = newNode
         return newNode
+
+    @property
+    def nodes(self) -> list[Node]:
+        return list(self.nodesMap.values())
 
     def getOrCreateEdge(self, node1: Node, node2: Node) -> Edge:
         """Ensures edges are shared between adjacent tiles."""
@@ -77,6 +80,8 @@ class Board:
             if {edge.node1, edge.node2} == {node1, node2}:
                 return edge
         newEdge = Edge(node1, node2)
+        node1.neighbors.add(node2)
+        node2.neighbors.add(node1)
         self.edges.append(newEdge)
         return newEdge
 
@@ -115,11 +120,11 @@ class Board:
             
             # Calculate the 6 corner nodes of the hexagon based on its center (cx, cy)
             cx, cy = tile.getActualCoordinates()
-            hex_radius = 1.0 / SQRT3  # Standard outer radius for this grid scale
+            hex_radius = 1.0
             tileNodes: list[Node] = []
             
             for k in range(6):
-                angle_deg = 60 * k - 30  # Pointy-topped hexagon angles
+                angle_deg = 60 * k  # Flat-topped hexagon angles
                 angle_rad = math.radians(angle_deg)
                 nx = cx + hex_radius * math.cos(angle_rad)
                 ny = cy + hex_radius * math.sin(angle_rad)
