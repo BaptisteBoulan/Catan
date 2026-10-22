@@ -35,6 +35,11 @@ By default it loads the randomized board from `/api/board` with the fly camera.
 Each player starts with a settlement and a city, each connected to one
 player-colored road along a tile edge. A light-blue circular water surface sits
 just beneath the board and scales with its size.
+Each non-desert tile displays the OBJ token matching its `diceNumber` from the
+board response; the desert has no token. Token assets are bundled directly from
+`../blender/objs`, centered and scaled to sit on the tile surface. Repeated
+numbers share geometry within a scene. Missing or unsupported dice numbers and
+asset-loading failures are shown as initialization errors.
 To use another scene, pass a stable factory:
 
 ```tsx
@@ -52,6 +57,27 @@ Define the factory outside the component or memoize it with `useCallback`;
 changing it destroys the previous engine and starts a new scene.
 Unmounting cancels initialization and releases the frame loop, input listeners,
 resize observer, pointer lock and GPU device, including under React Strict Mode.
+
+## OBJ meshes
+
+`loadOBJ` parses raw OBJ text synchronously. To load files by URL instead, use
+`loadOBJFromPath`, which returns a `Promise<Geometry>`:
+
+```ts
+import objPath from './assets/meshes/suzzy.obj?url'
+import mtlPath from './assets/meshes/suzzy.mtl?url'
+import { loadOBJFromPath } from './engine/mesh/primitives/objLoader'
+
+const geometry = await loadOBJFromPath(objPath, mtlPath)
+```
+
+The MTL URL is optional. The third argument sets the fallback color and the
+fourth accepts an `AbortSignal`. HTTP and network failures reject the promise.
+Concave OBJ faces are triangulated with Earcut while preserving face winding,
+so the number tokens' digit cutouts remain open.
+Use Vite `?url` imports for bundled assets, or browser-accessible URLs for files
+in `public`; filesystem paths are not supported. `Suzzy.create(options, signal)`
+uses this loader to create the scene object asynchronously.
 
 ## Controls
 
