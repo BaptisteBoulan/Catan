@@ -1,7 +1,10 @@
 import random
 
+from backend.src.types.enum import BuildingType, Resource
+from backend.src.types.devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
+
 from .board import Board, Node
-from .enum import BuildingType, Color
+from .enum import Color
 from .player import Player
 
 MIN_PLAYERS = 2
@@ -44,6 +47,7 @@ class Game:
         ]
         self.board = Board(boardSize)
         self.placeInitialBuildings()
+        self.setDevCardDeck()
 
     def placeInitialBuildings(self, maxAttempts: int = 100):
         candidates = self.board.nodes
@@ -72,12 +76,41 @@ class Game:
                     raise RuntimeError(f"No free edge for a starting road at node {node.id}")
                 random.choice(availableEdges).owner = player
 
+    def setDevCardDeck(self):
+        self.devCardDeck: list[DevCard] = [
+            Knight(),
+            RoadBuilding(),
+            YearOfPlenty(),
+            Monopoly(),
+            VictoryPoint(),
+        ] * 2   
+        random.shuffle(self.devCardDeck)
+
     def build(self, player: Player, node: Node, buildingType: BuildingType):
         node.building = buildingType
         node.owner = player
         player.points += BUILDING_POINTS[buildingType]
+        
+    def runTurn(self, player: Player):
+        # Implement the logic for running a single turn for the given player
+        self.throwDice()
+        pass
+    
+    def throwDice(self):
+        diceResult: int = random.randint(1, 6) + random.randint(1, 6)
+        
+        for tile in self.board.tiles:
+            if tile.diceNumber == diceResult and not tile.isOccupiedByThief:
+                for node in tile.nodes:
+                    if node.owner is not None:
+                        player: Player = node.owner
+                        resource: Resource | None = tile.landscape.resource
+                        if resource is not None:
+                            player.resources.add(resource)
+                            if node.building == BuildingType.CITY:
+                                player.resources.add(resource)
 
-    def serialize(self) -> dict:
+    def serialize(self) -> dict[str, object]:
         playerIndex = {id(p): k for k, p in enumerate(self.players)}
 
         def ownerIndex(owner: Player | None) -> int | None:

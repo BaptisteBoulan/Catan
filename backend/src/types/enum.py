@@ -39,11 +39,3 @@ class BuildingType(Enum):
     NONE = "none"
     SETTLEMENT = "settlement"
     CITY = "city"
-
-
-class DevelopmentCard(Enum):
-    KNIGHT = auto()
-    VICTORY_POINT = auto()
-    ROAD_BUILDING = auto()
-    YEAR_OF_PLENTY = auto()
-    MONOPOLY = auto()
