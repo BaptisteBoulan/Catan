@@ -1,13 +1,35 @@
-from types.board import Board
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
-if __name__ == "__main__":
-    board = Board(boardSize=3)
-    print(f"Generated {len(board.tiles)} tiles, {len(board.nodesMap)} unique nodes, and {len(board.edges)} unique edges.\n")
-    for tile in board.tiles[:3]:
-        print(tile)
-        print("  Nodes:")
-        for node in tile.nodes:
-            print(f"    {node}")
-        print("  Edges:")
-        for edge in tile.edges:
-            print(f"    {edge}")
+from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game
+
+app = FastAPI()
+
+game = Game()
+
+
+class NewBoardRequest(BaseModel):
+	playerCount: int = Field(default=4, ge=MIN_PLAYERS, le=MAX_PLAYERS)
+
+
+@app.get("/board")
+def getBoard():
+	return game.serialize()
+
+@app.post("/new-board")
+def newBoard(request: NewBoardRequest):
+	global game
+	game = Game(playerCount=request.playerCount)
+	return game.serialize()
+
+
+class DemoGameRequest(NewBoardRequest):
+	roundCount: int = Field(default=5, ge=0, le=100)
+
+
+@app.post("/demo-game")
+def demoGame(request: DemoGameRequest):
+	global game
+	game = Game(playerCount=request.playerCount)
+	game.runRandomRounds(request.roundCount)
+	return game.serialize()

@@ -1,7 +1,11 @@
-import abc
+from __future__ import annotations
 
-from .game import Game
-from .player import Player
+import abc
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .game import Game
+    from .player import Player
 
 class DevCard(abc.ABC):
     @abc.abstractmethod

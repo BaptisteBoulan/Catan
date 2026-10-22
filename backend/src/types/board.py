@@ -15,6 +15,7 @@ class Node:
         self.building: BuildingType = BuildingType.NONE
         self.owner: Player | None = None
         self.neighbors: set["Node"] = set()
+        self.edges: set["Edge"] = set()
 
     def __repr__(self):
         b_str = f"{self.building.name}" if self.building != BuildingType.NONE else "Empty"
@@ -82,6 +83,8 @@ class Board:
         newEdge = Edge(node1, node2)
         node1.neighbors.add(node2)
         node2.neighbors.add(node1)
+        node1.edges.add(newEdge)
+        node2.edges.add(newEdge)
         self.edges.append(newEdge)
         return newEdge
 

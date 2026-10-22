@@ -1,4 +1,9 @@
-from backend.src.types.devCard import DevCard
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .devCard import DevCard
 
 from .enum import Resource, Color
 
@@ -6,8 +11,8 @@ class Player:
     def __init__(self, name: str, color: Color):
         self.name = name
         self.points = 0
-        self.resources: set[Resource] = set()
-        self.devCards: set[DevCard] = set()
+        self.resources: list[Resource] = []
+        self.devCards: list[DevCard] = []
         self.color: Color = color
         
     def getResourceCount(self, resource: Resource) -> int:

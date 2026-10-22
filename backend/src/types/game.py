@@ -1,8 +1,9 @@
 import random
 
-from backend.src.types.enum import BuildingType, Resource
-from backend.src.types.devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
+from .enum import BuildingType, Resource
+from .devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
 
+from .action import Action, BuildCity, BuildRoad, BuildSettlement
 from .board import Board, Node
 from .enum import Color
 from .player import Player
@@ -92,9 +93,29 @@ class Game:
         player.points += BUILDING_POINTS[buildingType]
         
     def runTurn(self, player: Player):
-        # Implement the logic for running a single turn for the given player
         self.throwDice()
-        pass
+
+    def runRandomTurn(self, player: Player):
+        """Throws the dice, then plays random actions until none can be executed."""
+        self.runTurn(player)
+        while True:
+            actions: list[Action] = [
+                *(BuildRoad(player, edge, self) for edge in self.board.edges),
+                *(BuildSettlement(player, node, self) for node in self.board.nodes),
+                *(BuildCity(player, node, self) for node in self.board.nodes),
+            ]
+            random.shuffle(actions)
+            for action in actions:
+                if action.execute():
+                    print(f"{player.name} {action.description()}")
+                    break
+            else:
+                break
+
+    def runRandomRounds(self, roundCount: int):
+        for _ in range(roundCount):
+            for player in self.players:
+                self.runRandomTurn(player)
     
     def throwDice(self):
         diceResult: int = random.randint(1, 6) + random.randint(1, 6)
@@ -106,9 +127,9 @@ class Game:
                         player: Player = node.owner
                         resource: Resource | None = tile.landscape.resource
                         if resource is not None:
-                            player.resources.add(resource)
+                            player.resources.append(resource)
                             if node.building == BuildingType.CITY:
-                                player.resources.add(resource)
+                                player.resources.append(resource)
 
     def serialize(self) -> dict[str, object]:
         playerIndex = {id(p): k for k, p in enumerate(self.players)}
