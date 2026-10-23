@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import secrets
 from threading import RLock
 from time import monotonic
-from typing import Callable
+from typing import Callable, Literal, TypeVar
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -14,6 +14,9 @@ app = FastAPI()
 
 PRESENCE_TIMEOUT = 15
 HOST_PLAYER_ID = 0
+
+BuildKind = Literal["road", "settlement", "city"]
+T = TypeVar("T")
 
 
 @dataclass
@@ -57,6 +60,10 @@ class CreateGameRequest(JoinGameRequest, NewBoardRequest):
 
 class DemoGameRequest(NewBoardRequest):
     roundCount: int = Field(default=5, ge=0, le=100)
+
+
+class BuildRequest(BaseModel):
+    target: int
 
 
 def getSession(gameId: str) -> GameSession:
@@ -136,9 +143,9 @@ def heartbeat(gameId: str, playerId: int) -> dict[str, object]:
         return {"players": session.players(), "turn": session.game.serializeTurn()}
 
 
-def applyRule(action: Callable[[], object]) -> None:
+def applyRule(action: Callable[[], T]) -> T:
     try:
-        action()
+        return action()
     except GameRuleError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -171,6 +178,23 @@ def buyDevCard(gameId: str, playerId: int):
         session = getSession(gameId)
         requirePlayer(session, playerId)
         applyRule(lambda: session.game.buyDevCard(playerId))
+        return sessionState(gameId, session)
+
+
+@app.get("/games/{gameId}/build/{kind}/targets")
+def buildTargets(gameId: str, kind: BuildKind, playerId: int) -> dict[str, object]:
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        return {"targets": applyRule(lambda: session.game.buildTargets(playerId, kind))}
+
+
+@app.post("/games/{gameId}/build/{kind}")
+def build(gameId: str, kind: BuildKind, playerId: int, request: BuildRequest):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.buildAt(playerId, kind, request.target))
         return sessionState(gameId, session)
 
 

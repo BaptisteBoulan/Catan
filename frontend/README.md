@@ -68,25 +68,38 @@ shown over the canvas and logged to the console.
 ```sh
 npm run build
 npm run lint
+npm test
 ```
 
 ## Canvas component
 
 ```tsx
 import { WebGpuCanvas } from './components/WebGpuCanvas'
-import { createDemoScene } from './game/demo-scene'
+import { createDemoScene, type GameScene } from './game/demo-scene'
 import type { GameDto } from './game/api-types'
 import { useCallback } from 'react'
 
 export function Board({ game }: { game: GameDto }) {
-  const createScene = useCallback((signal?: AbortSignal) => createDemoScene(game, signal), [game])
-  return <WebGpuCanvas createScene={createScene} style={{ width: '100%', height: 600 }} />
+  const updateScene = useCallback(
+    (scene: GameScene, signal: AbortSignal) => scene.sync(game, signal),
+    [game],
+  )
+  return <WebGpuCanvas createScene={createDemoScene} updateScene={updateScene}
+    style={{ width: '100%', height: 600 }} />
 }
 ```
 
 Give the component an explicit height (or a parent-relative height via CSS).
 It resizes the drawing buffer to its displayed size and device pixel ratio.
-The app loads the game-scoped board and supplies a stable scene factory with the fly camera.
+The scene factory creates a persistent scene with its camera and fly controller.
+Game updates go through `updateScene`, without restarting the engine, frame loop,
+input listeners or camera. The game scene retains unchanged objects and GPU buffers;
+presence and turn-only updates do not rebuild board geometry. Roads, buildings and
+placement previews are added, replaced or removed individually.
+Terrain changes are prepared off-scene, including asynchronous token loading, and
+applied together so the previous board stays visible until the update is ready.
+Superseded updates are cancelled; failed updates keep the previous board visible
+and show an error over the canvas.
 Each player starts with a settlement and a city, each connected to one
 player-colored road along a tile edge. A light-blue circular water surface sits
 just beneath the board and scales with its size.
@@ -94,7 +107,7 @@ Each non-desert tile displays the OBJ token matching its `diceNumber` from the
 board response; the desert has no token. Token assets are bundled directly from
 `../blender/objs`, centered and scaled to sit on the tile surface. Repeated
 numbers share geometry within a scene. Missing or unsupported dice numbers and
-asset-loading failures are shown as initialization errors.
+asset-loading failures are shown as scene update errors.
 To use another scene, pass a stable factory:
 
 ```tsx
@@ -110,6 +123,8 @@ export function CustomBoard() {
 
 Define the factory outside the component or memoize it with `useCallback`;
 changing it destroys the previous engine and starts a new scene.
+The factory is synchronous; perform asynchronous asset loading in `updateScene`.
+Changing `updateScene` cancels the previous update, but does not recreate the engine.
 Unmounting cancels initialization and releases the frame loop, input listeners,
 resize observer, pointer lock and GPU device, including under React Strict Mode.
 

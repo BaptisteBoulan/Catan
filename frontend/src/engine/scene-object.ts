@@ -30,6 +30,10 @@ export class SceneObject {
     mesh?: Mesh;
     visible = true;
 
+    /** Radius of the sphere used for ray picking, centered on the object's world position. */
+    pickRadius?: number;
+    onPick?: () => void;
+
     position: Vec3;
     rotation: Vec3;
     scale: Vec3;

@@ -1,5 +1,11 @@
 export type PlayerColor = 'red' | 'blue' | 'green' | 'yellow' | 'white';
 export type BuildingType = 'none' | 'settlement' | 'city';
+export type BuildKind = 'road' | 'settlement' | 'city';
+
+/** Node ids for settlements and cities, edge indices (in `board.edges`) for roads. */
+export type BuildTargetsDto = {
+    targets: number[];
+};
 
 export type PlayerDto = {
     id: number;

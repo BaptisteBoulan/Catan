@@ -1,4 +1,7 @@
 export class Input {
+    /** Called on canvas clicks with normalized device coordinates. Return true to skip the pointer lock. */
+    onClick?: (ndcX: number, ndcY: number) => boolean;
+
     private readonly keys = new Set<string>();
     private mouseDx = 0;
     private mouseDy = 0;
@@ -9,8 +12,17 @@ export class Input {
         this.canvas = canvas;
         const { signal } = this.abort;
 
-        canvas.addEventListener("click", () => {
+        canvas.addEventListener("click", (event) => {
             canvas.focus();
+            // When locked, the ray goes through the center of the view.
+            let ndcX = 0;
+            let ndcY = 0;
+            if (!this.pointerLocked) {
+                const rect = canvas.getBoundingClientRect();
+                ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                ndcY = 1 - ((event.clientY - rect.top) / rect.height) * 2;
+            }
+            if (this.onClick?.(ndcX, ndcY) || this.pointerLocked) return;
             canvas.requestPointerLock().catch((error: unknown) => {
                 console.error("Failed to lock the canvas pointer", error);
             });

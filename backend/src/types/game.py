@@ -3,8 +3,8 @@ import random
 from .enum import BuildingType, Resource
 from .devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
 
-from .action import BuildCity, BuildRoad, BuildSettlement, DrawDevCard
-from .board import Board, Node
+from .action import BuildCity, BuildRoad, BuildSettlement, DrawDevCard, Target, TargetedAction
+from .board import Board, Edge, Node
 from .enum import Color
 from .player import Player
 
@@ -18,6 +18,12 @@ class GameRuleError(ValueError):
 BUILDING_POINTS = {
     BuildingType.SETTLEMENT: 1,
     BuildingType.CITY: 2,
+}
+
+BUILD_ACTIONS: dict[str, type[BuildRoad] | type[BuildSettlement] | type[BuildCity]] = {
+    "road": BuildRoad,
+    "settlement": BuildSettlement,
+    "city": BuildCity,
 }
 
 INLAND_START_ONLY = True
@@ -87,6 +93,38 @@ class Game:
             raise GameRuleError("No development cards left.")
         if not DrawDevCard(self.players[playerIndex], self).execute():
             raise GameRuleError("Not enough resources (needs sheep, wheat and ore).")
+
+    def buildAction(self, playerIndex: int, kind: str) -> BuildRoad | BuildSettlement | BuildCity:
+        self.requireTurn(playerIndex)
+        if self.diceRoll is None:
+            raise GameRuleError("Roll the dice first.")
+        actionType = BUILD_ACTIONS.get(kind)
+        if actionType is None:
+            raise GameRuleError(f"Unknown building: {kind}.")
+        action = actionType(self.players[playerIndex], self)
+        if not self.players[playerIndex].canPayResources(action.cost):
+            raise GameRuleError("Not enough resources.")
+        return action
+
+    def targetId(self, target: Node | Edge) -> int:
+        """Nodes are identified by their id, edges by their index in the board's edge list."""
+        return target.id if isinstance(target, Node) else self.board.edges.index(target)
+
+    def buildTargets(self, playerIndex: int, kind: str) -> list[int]:
+        targets = [self.targetId(target)
+                   for target in self.buildAction(playerIndex, kind).getValidTargets()]
+        if not targets:
+            raise GameRuleError("There is no place available to build this.")
+        return targets
+
+    def buildAt(self, playerIndex: int, kind: str, targetId: int):
+        if not self.executeOn(self.buildAction(playerIndex, kind), targetId):
+            raise GameRuleError("You cannot build there.")
+
+    def executeOn(self, action: TargetedAction[Target], targetId: int) -> bool:
+        target = next((target for target in action.getValidTargets()
+                       if self.targetId(target) == targetId), None)
+        return target is not None and action.chooseTarget(target) and action.execute()
 
     def endTurn(self, playerIndex: int):
         self.requireTurn(playerIndex)

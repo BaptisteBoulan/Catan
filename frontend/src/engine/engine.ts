@@ -27,6 +27,7 @@ export class Engine {
         this.gpu = gpu;
         this.renderer = new Renderer(gpu);
         this.input = new Input(canvas);
+        this.input.onClick = (ndcX, ndcY) => this.scene.pick(ndcX, ndcY);
 
         this.resizeObserver = new ResizeObserver(() => resizeCanvas(canvas));
         this.resizeObserver.observe(canvas);

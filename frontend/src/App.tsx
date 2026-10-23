@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { WebGpuCanvas } from './components/WebGpuCanvas'
-import type { GameIdentityDto, GameSessionDto, JoinedPlayerDto, TurnDto } from './game/api-types'
-import { createDemoScene } from './game/demo-scene'
+import type {
+  BuildKind, BuildTargetsDto, GameIdentityDto, GameSessionDto, JoinedPlayerDto, TurnDto,
+} from './game/api-types'
+import { createDemoScene, type GameScene } from './game/demo-scene'
 import './App.css'
 
 const MIN_PLAYERS = 1
 const MAX_PLAYERS = 5
+
+const BUILD_ACTIONS: { kind: BuildKind, label: string, cost: string }[] = [
+  { kind: 'road', label: 'Build road', cost: '1 wood and 1 brick' },
+  { kind: 'settlement', label: 'Build settlement', cost: '1 wood, 1 brick, 1 sheep and 1 wheat' },
+  { kind: 'city', label: 'Upgrade to city', cost: '3 ore and 2 wheat' },
+]
+
+type PendingPlacement = { kind: BuildKind, targets: number[] }
 
 type GameLocation = Pick<GameIdentityDto, 'gameId' | 'playerId'>
 
@@ -37,6 +47,7 @@ function App() {
   const [presenceError, setPresenceError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [isActing, setIsActing] = useState(false)
+  const [placement, setPlacement] = useState<PendingPlacement | null>(null)
 
   useEffect(() => {
     const onPopState = () => {
@@ -102,10 +113,43 @@ function App() {
     }
   }, [location])
 
-  const createScene = useCallback((signal?: AbortSignal) => {
+  const placeBuilding = useCallback(async (kind: BuildKind, target: number) => {
+    if (!location) return
+    setPlacement(null)
+    setIsActing(true)
+    setActionError(null)
+    try {
+      const session = await apiRequest<GameSessionDto>(
+        `/games/${location.gameId}/build/${kind}?playerId=${location.playerId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target }),
+        },
+      )
+      setGame(session)
+      setPlayers(session.joinedPlayers)
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setIsActing(false)
+    }
+  }, [location])
+
+  const isPlacing = !!placement && !!game?.turn.started
+    && game.turn.currentPlayer === location?.playerId
+
+  const updateScene = useCallback((scene: GameScene, signal: AbortSignal) => {
     if (!game) throw new Error('No game loaded.')
-    return createDemoScene(game, signal)
-  }, [game])
+    if (!isPlacing || !placement || !location) return scene.sync(game, signal)
+    const { kind, targets } = placement
+    return scene.sync(game, signal, {
+      kind,
+      targets,
+      playerId: location.playerId,
+      onPick: (target) => void placeBuilding(kind, target),
+    })
+  }, [game, isPlacing, placement, location, placeBuilding])
 
   function navigate(next: GameLocation | null) {
     window.history.pushState(null, '', next ? `/games/${next.gameId}/players/${next.playerId}` : '/')
@@ -114,13 +158,36 @@ function App() {
     setError(null)
     setPresenceError(null)
     setActionError(null)
+    setPlacement(null)
     setLocation(next)
+  }
+
+  async function choosePlacement(kind: BuildKind) {
+    if (!location) return
+    if (placement?.kind === kind) {
+      setPlacement(null)
+      return
+    }
+    setIsActing(true)
+    setActionError(null)
+    setPlacement(null)
+    try {
+      const { targets } = await apiRequest<BuildTargetsDto>(
+        `/games/${location.gameId}/build/${kind}/targets?playerId=${location.playerId}`,
+      )
+      setPlacement({ kind, targets })
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setIsActing(false)
+    }
   }
 
   async function gameAction(action: 'start' | 'roll' | 'dev-card' | 'end-turn') {
     if (!location) return
     setIsActing(true)
     setActionError(null)
+    setPlacement(null)
     try {
       const session = await apiRequest<GameSessionDto>(
         `/games/${location.gameId}/${action}?playerId=${location.playerId}`, { method: 'POST' },
@@ -264,7 +331,7 @@ function App() {
         <button onClick={() => navigate(null)}>Back to lobby</button>
       </aside>
       <section className="board-area" aria-label="Game board">
-        {game ? <WebGpuCanvas createScene={createScene} className="game-canvas" />
+        {game ? <WebGpuCanvas createScene={createDemoScene} updateScene={updateScene} className="game-canvas" />
           : <p role={error ? 'alert' : 'status'}>{error ?? 'Loading game...'}</p>}
       </section>
       {isMyTurn && turn && (
@@ -276,12 +343,21 @@ function App() {
           <div className="action-buttons">
             <button disabled={isActing || turn.diceRoll !== null}
               onClick={() => void gameAction('roll')}>Roll dice</button>
+            {BUILD_ACTIONS.map(({ kind, label, cost }) => (
+              <button key={kind} disabled={isActing || turn.diceRoll === null}
+                className={isPlacing && placement?.kind === kind ? 'placing' : undefined}
+                title={`Costs ${cost}`}
+                onClick={() => void choosePlacement(kind)}>
+                {isPlacing && placement?.kind === kind ? 'Cancel' : label}
+              </button>
+            ))}
             <button disabled={isActing || turn.diceRoll === null}
               title="Costs 1 sheep, 1 wheat and 1 ore"
               onClick={() => void gameAction('dev-card')}>Buy development card</button>
             <button className="end-turn" disabled={isActing || turn.diceRoll === null}
               onClick={() => void gameAction('end-turn')}>Next turn</button>
           </div>
+          {isPlacing && <p className="placement-hint">Click a highlighted slot on the board.</p>}
           {actionError && <p role="alert">{actionError}</p>}
         </aside>
       )}

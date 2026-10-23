@@ -252,6 +252,20 @@
   background: #2563eb;
 }
 
+.app .action-buttons .placing {
+  background: #b45309;
+}
+
+.app .action-buttons .placing:hover:not(:disabled) {
+  background: #d97706;
+}
+
+.placement-hint {
+  margin: 16px 0 0;
+  color: #d4d4d8;
+  font-size: 0.85rem;
+}
+
 [role="alert"] {
   margin-top: 16px;
   color: #fca5a5;
