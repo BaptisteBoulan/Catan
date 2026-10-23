@@ -36,12 +36,8 @@ function addHexTile(scene: Scene, i: number, j: number, color: Vec3) {
     }));
 }
 
-export async function createDemoScene(signal?: AbortSignal): Promise<Scene> {
-    const response = await fetch('/api/board', { signal });
-    if (!response.ok) {
-        throw new Error(`Failed to load board: ${response.status} ${response.statusText}`);
-    }
-    const { board, players }: GameDto = await response.json();
+export async function createDemoScene(game: GameDto, signal?: AbortSignal): Promise<Scene> {
+    const { board, players } = game;
     const numberedTiles = board.tiles.filter((tile) => tile.landscape !== 6);
     const diceNumbers = new Set<number>();
     for (const tile of numberedTiles) {

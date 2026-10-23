@@ -139,7 +139,7 @@ class Game:
 
         return {
             "players": [
-                {"id": k, "name": p.name, "color": p.color.value, "points": p.points}
+                {"id": k, **p.serialize()}
                 for k, p in enumerate(self.players)
             ],
             "board": {

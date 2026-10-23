@@ -33,4 +33,16 @@ class Player:
             for _ in range(count):
                 self.resources.remove(resource)
         return True
+
+    def serialize(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "color": self.color.value,
+            "points": self.points,
+            "resources": [resource.value for resource in self.resources],
+            "devCards": [
+                {"name": card.name, "color": card.color}
+                for card in self.devCards
+            ],
+        }
         

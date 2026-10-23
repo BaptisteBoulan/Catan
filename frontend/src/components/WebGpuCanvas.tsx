@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Engine } from '../engine/engine'
 import type { Scene } from '../engine/scene'
-import { createDemoScene } from '../game/demo-scene'
 import './WebGpuCanvas.css'
 
 type WebGpuCanvasProps = {
-  createScene?: (signal?: AbortSignal) => Scene | Promise<Scene>
+  createScene: (signal?: AbortSignal) => Scene | Promise<Scene>
   className?: string
   style?: CSSProperties
 }
 
 export function WebGpuCanvas({
-  createScene = createDemoScene,
+  createScene,
   className,
   style,
 }: WebGpuCanvasProps) {

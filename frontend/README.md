@@ -11,6 +11,57 @@ npm install
 npm run dev
 ```
 
+Run the backend from the repository root in a separate terminal (Windows):
+
+```powershell
+backend\.venv\Scripts\python.exe -m uvicorn backend.src.main:app
+```
+
+The Vite development server proxies `/api` to `127.0.0.1:8000`.
+
+## Game sessions
+
+Enter a display name, then create a game with 2-5 player slots or join using an
+existing four-digit game ID. The creator claims the first slot; each join claims
+the next slot and uses its existing board pieces and color. Names must be unique
+within a game, ignoring case and surrounding whitespace. Full games reject joins.
+
+The game page URL is `/games/{gameId}/players/{playerId}`. Refreshing or reopening
+that URL resumes the same player without creating another one. The sidebar shows
+the game ID, creation time, your name, and connected players with their colors.
+Presence is refreshed every 3 seconds; a player disappears from the connected
+list after 15 seconds without a heartbeat. Player slots remain reserved when
+disconnected, so the same URL can reconnect. Open separate tabs with different
+names to test joining; create another game to verify isolation.
+The sidebar also shows each player's resource cards, development cards, and
+victory points. Development cards currently use colored name tiles as placeholders.
+
+Sessions live only in the backend's `games` dictionary and disappear on restart.
+Run one backend worker: this in-memory store is not shared across processes.
+There are no accounts or authentication; anyone with a player URL can use that
+identity. These URLs are identifiers for local development, not secure credentials.
+Production hosting must serve the frontend entry point for nested game URLs and
+proxy `/api` to the backend.
+
+Backend routes (under `/api` through Vite):
+
+- `POST /games` with `{ "name": "Alice", "playerCount": 4 }`
+- `POST /games/{gameId}/players` with `{ "name": "Bob" }`
+- `GET /games/{gameId}?playerId={playerId}` for the board and session metadata
+- `POST /games/{gameId}/players/{playerId}/heartbeat` for live player presence
+- `POST /games/{gameId}/new-board?playerId={playerId}` with `{ "playerCount": 4 }`
+- `POST /games/{gameId}/demo-game?playerId={playerId}` with
+  `{ "playerCount": 4, "roundCount": 5 }`
+
+The former global board routes are replaced by game-scoped routes. Board resets
+retain claimed names and cannot reduce capacity below the number of joined players.
+
+Run the backend HTTP tests from the repository root:
+
+```powershell
+backend\.venv\Scripts\python.exe -m unittest discover -s backend\tests -v
+```
+
 Use a WebGPU-capable browser on localhost or HTTPS. Initialization failures are
 shown over the canvas and logged to the console.
 
@@ -23,15 +74,19 @@ npm run lint
 
 ```tsx
 import { WebGpuCanvas } from './components/WebGpuCanvas'
+import { createDemoScene } from './game/demo-scene'
+import type { GameDto } from './game/api-types'
+import { useCallback } from 'react'
 
-export function Board() {
-  return <WebGpuCanvas style={{ width: '100%', height: 600 }} />
+export function Board({ game }: { game: GameDto }) {
+  const createScene = useCallback((signal?: AbortSignal) => createDemoScene(game, signal), [game])
+  return <WebGpuCanvas createScene={createScene} style={{ width: '100%', height: 600 }} />
 }
 ```
 
 Give the component an explicit height (or a parent-relative height via CSS).
 It resizes the drawing buffer to its displayed size and device pixel ratio.
-By default it loads the randomized board from `/api/board` with the fly camera.
+The app loads the game-scoped board and supplies a stable scene factory with the fly camera.
 Each player starts with a settlement and a city, each connected to one
 player-colored road along a tile edge. A light-blue circular water surface sits
 just beneath the board and scales with its size.

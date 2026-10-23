@@ -6,6 +6,15 @@ export type PlayerDto = {
     name: string;
     color: PlayerColor;
     points: number;
+    resources: ResourceCard[];
+    devCards: DevCardDto[];
+};
+
+export type ResourceCard = 'wood' | 'brick' | 'sheep' | 'wheat' | 'ore';
+
+export type DevCardDto = {
+    name: string;
+    color: string;
 };
 
 export type TileDto = {
@@ -39,4 +48,20 @@ export type GameDto = {
         nodes: NodeDto[];
         edges: EdgeDto[];
     };
+};
+
+export type JoinedPlayerDto = PlayerDto & {
+    connected: boolean;
+};
+
+export type GameSessionDto = GameDto & {
+    gameId: string;
+    createdAt: string;
+    joinedPlayers: JoinedPlayerDto[];
+};
+
+export type GameIdentityDto = {
+    gameId: string;
+    playerId: number;
+    createdAt: string;
 };
