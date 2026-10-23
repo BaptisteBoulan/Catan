@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game, GameRuleError
+from .types.enum import Resource
 
 app = FastAPI()
 
@@ -30,7 +31,7 @@ class GameSession:
         return [
             {
                 "id": index,
-                **self.game.players[index].serialize(),
+                **self.game.players[index].serialize(self.game),
                 "connected": now - lastSeen < PRESENCE_TIMEOUT,
             }
             for index, lastSeen in self.lastSeen.items()
@@ -64,6 +65,15 @@ class DemoGameRequest(NewBoardRequest):
 
 class BuildRequest(BaseModel):
     target: int
+
+
+class TradeRequest(BaseModel):
+    give: Resource
+    receive: Resource
+
+
+class PlayDevCardRequest(BaseModel):
+    resources: list[Resource] = Field(default_factory=list, max_length=2)
 
 
 def getSession(gameId: str) -> GameSession:
@@ -140,7 +150,11 @@ def heartbeat(gameId: str, playerId: int) -> dict[str, object]:
         session = getSession(gameId)
         requirePlayer(session, playerId)
         session.lastSeen[playerId] = monotonic()
-        return {"players": session.players(), "turn": session.game.serializeTurn()}
+        return {
+            "players": session.players(),
+            "turn": session.game.serializeTurn(),
+            "state": sessionState(gameId, session),
+        }
 
 
 def applyRule(action: Callable[[], T]) -> T:
@@ -181,6 +195,24 @@ def buyDevCard(gameId: str, playerId: int):
         return sessionState(gameId, session)
 
 
+@app.post("/games/{gameId}/trade")
+def trade(gameId: str, playerId: int, request: TradeRequest):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.trade(playerId, request.give, request.receive))
+        return sessionState(gameId, session)
+
+
+@app.post("/games/{gameId}/dev-card/{cardIndex}/play")
+def playDevCard(gameId: str, cardIndex: int, playerId: int, request: PlayDevCardRequest):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.playDevCard(playerId, cardIndex, request.resources))
+        return sessionState(gameId, session)
+
+
 @app.get("/games/{gameId}/build/{kind}/targets")
 def buildTargets(gameId: str, kind: BuildKind, playerId: int) -> dict[str, object]:
     with gamesLock:
@@ -204,6 +236,23 @@ def endTurn(gameId: str, playerId: int):
         session = getSession(gameId)
         requirePlayer(session, playerId)
         applyRule(lambda: session.game.endTurn(playerId))
+        return sessionState(gameId, session)
+
+
+@app.get("/games/{gameId}/thief/targets")
+def thiefTargets(gameId: str, playerId: int) -> dict[str, object]:
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        return {"targets": applyRule(lambda: session.game.thiefTargets(playerId))}
+
+
+@app.post("/games/{gameId}/thief")
+def moveThief(gameId: str, playerId: int, request: BuildRequest):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.moveThief(playerId, request.target))
         return sessionState(gameId, session)
 
 

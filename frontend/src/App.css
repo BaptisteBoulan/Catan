@@ -78,22 +78,93 @@
   font-weight: 600;
 }
 
-.resource-card-list,
-.dev-card-list {
+.sidebar .resource-card-list,
+.sidebar .dev-card-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 12px 0;
   margin: 0;
+  padding: 6px 22px 6px 0;
+  list-style: none;
 }
 
-.resource-card,
-.dev-card {
-  padding: 5px 8px;
-  border-radius: 5px;
+.sidebar .resource-card,
+.sidebar .dev-card-slot {
+  position: relative;
+  flex: 0 0 76px;
+  width: 76px;
+  height: 108px;
+  margin-right: -22px;
+}
+
+.sidebar .resource-card,
+.app .dev-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px;
+  border: 2px solid #ffffff60;
+  border-radius: 7px;
+  box-shadow: -3px 3px 7px #0007;
   color: #111827;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 700;
+  line-height: 1.25;
   text-transform: capitalize;
+  overflow-wrap: normal;
+  transition: transform 120ms ease;
+}
+
+.app .dev-card {
+  width: 100%;
+  height: 100%;
+  text-align: left;
+}
+
+.sidebar .resource-card:hover,
+.sidebar .dev-card-slot:hover,
+.sidebar .dev-card-slot:focus-within {
+  z-index: 1;
+  transform: translateY(-5px);
+}
+
+.card-icon {
+  font-size: 1.65rem;
+}
+
+.app .dev-card.card-playable {
+  background: #166534;
+  color: #f0fdf4;
+}
+
+.app .dev-card.card-playable:hover {
+  background: #15803d;
+}
+
+.app .dev-card.card-unavailable {
+  background: #52525b;
+  color: #f4f4f5;
+}
+
+.app .dev-card.card-used {
+  background: #991b1b;
+  color: #fef2f2;
+}
+
+.app .dev-card:disabled {
+  opacity: 1;
+}
+
+.dev-card small {
+  font-size: 0.6rem;
+}
+
+.card-legend {
+  margin: 10px 0 0;
+  color: #a1a1aa;
+  font-size: 0.7rem;
 }
 
 .resource-wood {
@@ -241,6 +312,71 @@
 .action-buttons {
   display: grid;
   gap: 10px;
+}
+
+.cost-action {
+  position: relative;
+  display: block;
+}
+
+.cost-action > button {
+  width: 100%;
+}
+
+.cost-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 10;
+  width: 240px;
+  max-width: calc(100vw - 48px);
+  padding: 12px 14px;
+  border: 1px solid #71717a;
+  border-radius: 8px;
+  background: #27272a;
+  color: #fef3c7;
+  box-shadow: 0 6px 20px #0008;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.cost-tooltip strong {
+  display: block;
+  color: white;
+}
+
+.cost-action:hover .cost-tooltip,
+.cost-action:focus-within .cost-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+.trade-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+}
+
+.trade-form p {
+  margin: 0 0 8px;
+  color: #d4d4d8;
+  font-size: 0.85rem;
+}
+
+.trade-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #27272a;
+  color: white;
 }
 
 .app .action-buttons .end-turn {

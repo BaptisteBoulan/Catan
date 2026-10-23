@@ -25,10 +25,15 @@ after(async () => {
 function gameState() {
   return {
     players: [{ id: 0, name: 'Alice', color: 'red', points: 1, resources: [], devCards: [] }],
-    turn: { started: true, currentPlayer: 0, turnNumber: 1, diceRoll: null },
+    turn: {
+      started: true, currentPlayer: 0, turnNumber: 1, diceRoll: null,
+      setup: null, thiefMovePending: false,
+    },
     board: {
       boardSize: 1,
-      tiles: [{ i: 0, j: 0, landscape: 6, diceNumber: null, nodes: [0, 1] }],
+      tiles: [{
+        i: 0, j: 0, landscape: 6, diceNumber: null, nodes: [0, 1], isOccupiedByThief: true,
+      }],
       nodes: [
         { id: 0, x: 0, y: 0, building: 'settlement', owner: 0 },
         { id: 1, x: 1, y: 0, building: 'none', owner: null },
@@ -51,6 +56,59 @@ function uploadGeometry(scene) {
   scene.traverse((object) => object.mesh?.geometry.getBuffers(device))
   return buffers
 }
+
+test('thief has a black cylinder and sphere, with clickable previews and isolated movement', async () => {
+  const scene = createDemoScene()
+  const game = gameState()
+  game.board.tiles.push({
+    i: 1, j: 0, landscape: 6, diceNumber: null, nodes: [1], isOccupiedByThief: false,
+  })
+  await scene.sync(game)
+  const thief = scene.root.children.find((object) => object.name === 'Thief')
+  const terrain = scene.root.children.find((object) => object.name === 'Terrain')
+  assert.ok(thief)
+  assert.equal(thief.children.length, 2)
+  assert.equal(thief.children[0].name, 'Thief body')
+  assert.equal(thief.children[1].name, 'Thief head')
+  for (const child of thief.children) {
+    assert.ok(child.mesh.geometry.colors.every((value) => value === 0))
+  }
+  assert.ok(thief.children[1].position[1] > thief.children[0].position[1])
+  const buffers = uploadGeometry(scene)
+  let picked
+  const placement = {
+    kind: 'thief', targets: [1], playerId: 0,
+    onPick: (target) => { picked = target },
+  }
+  await scene.sync(game, undefined, placement)
+  const preview = scene.root.children.find((object) => object.onPick)
+  assert.ok(preview)
+  assert.equal(preview.position[0], 1.5)
+  assert.equal(preview.pickRadius, 0.45)
+  assert.ok(preview.children[0].mesh.geometry.colors.every((value) => value === 0.5))
+  preview.onPick()
+  assert.equal(picked, 1)
+  const previewBuffers = uploadGeometry(scene)
+  await scene.sync(game, undefined, { ...placement, onPick: () => { picked = 'updated' } })
+  assert.ok(scene.root.children.includes(preview))
+  preview.onPick()
+  assert.equal(picked, 'updated')
+  assert.equal(uploadGeometry(scene).length, 0)
+
+  game.board.tiles[0].isOccupiedByThief = false
+  game.board.tiles[1].isOccupiedByThief = true
+  await scene.sync(game)
+  assert.ok(!scene.root.children.includes(thief))
+  assert.ok(!scene.root.children.includes(preview))
+  assert.ok(scene.root.children.includes(terrain))
+  const moved = scene.root.children.find((object) => object.name === 'Thief')
+  assert.equal(moved.position[0], 1.5)
+  assert.equal(moved.position[2], Math.fround(Math.sqrt(3) / 2))
+  assert.equal(buffers.filter((buffer) => buffer.destroyed).length, 8)
+  assert.ok(previewBuffers.every((buffer) => buffer.destroyed))
+  scene.destroy()
+  assert.ok(buffers.every((buffer) => buffer.destroyed))
+})
 
 test('heartbeat-only updates preserve camera, controller, objects and GPU buffers', async () => {
   const scene = createDemoScene()
@@ -129,6 +187,45 @@ test('placement previews retain buffers, refresh callbacks and disappear on canc
   await scene.sync(game)
   assert.ok(!scene.root.children.includes(preview))
   assert.ok(scene.root.children.some((object) => object.name === 'Terrain'))
+  scene.destroy()
+})
+
+test('empty setup board supports settlement then connected road previews', async () => {
+  const scene = createDemoScene()
+  const game = gameState()
+  game.board.nodes[0].owner = null
+  game.board.nodes[0].building = 'none'
+  game.turn.setup = { round: 1, kind: 'settlement' }
+  game.turn.turnNumber = 0
+  await scene.sync(game)
+  assert.ok(!scene.root.children.some((object) => object.name === 'Settlement'))
+  let picked
+  await scene.sync(game, undefined, {
+    kind: 'settlement', targets: [0], playerId: 0,
+    onPick: (target) => { picked = target },
+  })
+  const settlementPreview = scene.root.children.find((object) => object.onPick)
+  assert.ok(settlementPreview)
+  settlementPreview.onPick()
+  assert.equal(picked, 0)
+
+  game.board.nodes[0].owner = 0
+  game.board.nodes[0].building = 'settlement'
+  game.turn.setup.kind = 'road'
+  await scene.sync(game, undefined, {
+    kind: 'road', targets: [0], playerId: 0,
+    onPick: (target) => { picked = `road:${target}` },
+  })
+  assert.ok(!scene.root.children.includes(settlementPreview))
+  assert.ok(scene.root.children.some((object) => object.name === 'Settlement' && !object.onPick))
+  const roadPreview = scene.root.children.find((object) => object.onPick)
+  assert.ok(roadPreview)
+  roadPreview.onPick()
+  assert.equal(picked, 'road:0')
+  game.board.edges[0].owner = 0
+  await scene.sync(game)
+  assert.ok(scene.root.children.some((object) => object.name === 'Road' && !object.onPick))
+  assert.ok(!scene.root.children.some((object) => object.onPick))
   scene.destroy()
 })
 

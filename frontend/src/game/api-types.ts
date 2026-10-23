@@ -1,6 +1,7 @@
 export type PlayerColor = 'red' | 'blue' | 'green' | 'yellow' | 'white';
 export type BuildingType = 'none' | 'settlement' | 'city';
 export type BuildKind = 'road' | 'settlement' | 'city';
+export type PlacementKind = BuildKind | 'thief';
 
 /** Node ids for settlements and cities, edge indices (in `board.edges`) for roads. */
 export type BuildTargetsDto = {
@@ -18,9 +19,21 @@ export type PlayerDto = {
 
 export type ResourceCard = 'wood' | 'brick' | 'sheep' | 'wheat' | 'ore';
 
+export type TradeRequestDto = {
+    give: ResourceCard;
+    receive: ResourceCard;
+};
+
 export type DevCardDto = {
     name: string;
     color: string;
+    used: boolean;
+    acquiredTurn: number;
+    unavailableReason: string | null;
+};
+
+export type PlayDevCardRequestDto = {
+    resources: ResourceCard[];
 };
 
 export type TileDto = {
@@ -51,6 +64,10 @@ export type TurnDto = {
     currentPlayer: number;
     turnNumber: number;
     diceRoll: number | null;
+    thiefMovePending: boolean;
+    freeRoadsRemaining: number;
+    devCardPlayed: boolean;
+    setup: { round: number; kind: 'settlement' | 'road' } | null;
 };
 
 export type GameDto = {

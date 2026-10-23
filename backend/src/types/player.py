@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .devCard import DevCard
+    from .game import Game
 
 from .enum import Resource, Color
 
@@ -36,14 +37,19 @@ class Player:
             for _ in range(count):
                 self.resources.remove(resource)
 
-    def serialize(self) -> dict[str, object]:
+    def serialize(self, game: Game | None = None) -> dict[str, object]:
         return {
             "name": self.name,
             "color": self.color.value,
             "points": self.points,
             "resources": [resource.value for resource in self.resources],
             "devCards": [
-                {"name": card.name, "color": card.color}
+                {
+                    "name": card.name, "color": card.color, "used": card.used,
+                    "acquiredTurn": card.acquiredTurn,
+                    "unavailableReason": game.devCardUnavailableReason(game.players.index(self), card)
+                    if game is not None else "No active game.",
+                }
                 for card in self.devCards
             ],
         }

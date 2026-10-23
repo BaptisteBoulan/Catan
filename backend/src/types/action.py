@@ -115,11 +115,14 @@ class BuildSettlement(TargetedAction[Node]):
             return "build a settlement"
         return f"built a settlement at node {self.target.id}"
 
-    def getValidTargets(self) -> list[Node]:
+    def getAvailableNodes(self) -> list[Node]:
         return [node for node in self.game.board.nodes
                 if node.owner is None
-                and not any(neighbor.owner is not None for neighbor in node.neighbors)
-                and any(edge.owner is self.player for edge in node.edges)]
+                and not any(neighbor.owner is not None for neighbor in node.neighbors)]
+
+    def getValidTargets(self) -> list[Node]:
+        return [node for node in self.getAvailableNodes()
+                if any(edge.owner is self.player for edge in node.edges)]
 
     def execute(self) -> bool:
         if self.target is None or not self.canBeExecuted():
@@ -127,6 +130,20 @@ class BuildSettlement(TargetedAction[Node]):
         self.player.payResources(self.cost)
         self.game.build(self.player, self.target, BuildingType.SETTLEMENT)
         return True
+
+class SetupSettlement(BuildSettlement):
+    cost: dict[Resource, int] = {}
+
+    def getValidTargets(self) -> list[Node]:
+        return self.getAvailableNodes()
+
+class FreeRoad(BuildRoad):
+    cost: dict[Resource, int] = {}
+
+class SetupRoad(FreeRoad):
+    def getValidTargets(self) -> list[Edge]:
+        return [edge for edge in super().getValidTargets()
+                if self.game.setupNode in (edge.node1, edge.node2)]
 
 class BuildCity(TargetedAction[Node]):
     cost = {Resource.ORE: 3, Resource.WHEAT: 2}
@@ -149,6 +166,26 @@ class BuildCity(TargetedAction[Node]):
         self.game.build(self.player, self.target, BuildingType.CITY)
         return True
 
+class BankTrade(Action):
+    def __init__(self, player: Player, game: Game, give: Resource, receive: Resource):
+        super().__init__(player, game)
+        self.cost = {give: 4}
+        self.give = give
+        self.receive = receive
+
+    def description(self) -> str:
+        return f"traded 4 {self.give.value} for 1 {self.receive.value}"
+
+    def canBeExecuted(self) -> bool:
+        return self.give != self.receive and super().canBeExecuted()
+
+    def execute(self) -> bool:
+        if not self.canBeExecuted():
+            return False
+        self.player.payResources(self.cost)
+        self.player.resources.append(self.receive)
+        return True
+
 class DrawDevCard(Action):
     cost = {Resource.SHEEP: 1, Resource.WHEAT: 1, Resource.ORE: 1}
 
@@ -163,5 +200,6 @@ class DrawDevCard(Action):
             return False
         self.player.payResources(self.cost)
         devCard = self.game.devCardDeck.pop()
+        devCard.acquiredTurn = self.game.turnNumber
         self.player.devCards.append(devCard)
         return True

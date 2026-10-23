@@ -9,11 +9,12 @@ import { HexTile } from "./objects/hex-tile";
 import { Settlement } from "./objects/settlement";
 import { City } from "./objects/city";
 import { Road, ROAD_HEIGHT } from "./objects/road";
+import { Thief } from "./objects/thief";
 import { loadNumberTokenGeometry } from "./objects/number-token";
-import type { BuildKind, GameDto, PlayerColor } from "./api-types";
+import type { PlacementKind, GameDto, PlayerColor } from "./api-types";
 
 export type Placement = {
-    kind: BuildKind;
+    kind: PlacementKind;
     targets: number[];
     playerId: number;
     onPick: (target: number) => void;
@@ -185,6 +186,15 @@ function describeObjects(
         ]),
         create: () => createTerrain(game, signal),
     });
+    board.tiles.forEach((tile, index) => {
+        if (!tile.isOccupiedByThief) return;
+        const x = tile.i * 1.5;
+        const z = (tile.j + tile.i / 2) * sqrt3;
+        updates.set(`thief:${index}`, {
+            signature: JSON.stringify([x, z]),
+            create: () => new Thief({ position: vec3.fromValues(x, TILE_HEIGHT / 2, z) }),
+        });
+    });
     const nodesById = new Map(board.nodes.map((node) => [node.id, node]));
     board.edges.forEach((edge, index) => {
         if (edge.owner === null) return;
@@ -229,7 +239,24 @@ function describeObjects(
     const color = vec3.lerp(playerColors[player.color], vec3.fromValues(1, 1, 1), PREVIEW_LIGHTEN);
 
     for (const target of placement.targets) {
-        if (placement.kind === 'road') {
+        if (placement.kind === 'thief') {
+            const tile = board.tiles[target];
+            if (!tile) throw new Error(`Invalid thief slot ${target}`);
+            const x = tile.i * 1.5;
+            const z = (tile.j + tile.i / 2) * sqrt3;
+            updates.set(`preview:thief:${target}`, {
+                signature: JSON.stringify([x, z]),
+                create: () => {
+                    const preview = new Thief({
+                        position: vec3.fromValues(x, TILE_HEIGHT / 2, z),
+                        color: vec3.fromValues(0.5, 0.5, 0.5),
+                    });
+                    preview.pickRadius = 0.45;
+                    return preview;
+                },
+                onPick: () => placement.onPick(target),
+            });
+        } else if (placement.kind === 'road') {
             const edge = board.edges[target];
             const start = edge && nodesById.get(edge.node1);
             const end = edge && nodesById.get(edge.node2);
