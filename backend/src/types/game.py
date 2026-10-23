@@ -13,6 +13,7 @@ from .player import Player
 
 MIN_PLAYERS = 1
 MAX_PLAYERS = 5
+WINNING_POINTS = 7
 
 
 class GameRuleError(ValueError):
@@ -43,6 +44,8 @@ class Game:
         self.currentPlayer = 0
         self.turnNumber = 0
         self.diceRoll: int | None = None
+        self.diceValues: tuple[int, int] | None = None
+        self.winner: int | None = None
         self.thiefMovePending = False
         self.freeRoadsRemaining = 0
         self.devCardPlayed = False
@@ -58,6 +61,8 @@ class Game:
         self.diceRoll = None
 
     def requireTurn(self, playerIndex: int):
+        if self.winner is not None:
+            raise GameRuleError("The game is over.")
         if not self.started:
             raise GameRuleError("The game has not started yet.")
         if playerIndex != self.currentPlayer:
@@ -128,6 +133,8 @@ class Game:
     def devCardUnavailableReason(self, playerIndex: int, card: DevCard) -> str | None:
         if card.used:
             return "Already used."
+        if self.winner is not None:
+            return "The game is over."
         if not self.started or self.setupStep is not None:
             return "Finish setup first."
         if playerIndex != self.currentPlayer:
@@ -163,6 +170,11 @@ class Game:
         card.used = True
         if not isinstance(card, VictoryPoint):
             self.devCardPlayed = True
+        self.checkVictory(player)
+
+    def checkVictory(self, player: Player):
+        if self.winner is None and player.points >= WINNING_POINTS:
+            self.winner = self.players.index(player)
 
     def buildAction(self, playerIndex: int, kind: str) -> BuildRoad | BuildSettlement | BuildCity:
         self.requireTurn(playerIndex)
@@ -243,6 +255,9 @@ class Game:
             "currentPlayer": self.currentPlayer,
             "turnNumber": self.turnNumber,
             "diceRoll": self.diceRoll,
+            "diceValues": self.diceValues,
+            "winner": self.winner,
+            "winningPoints": WINNING_POINTS,
             "thiefMovePending": self.thiefMovePending,
             "freeRoadsRemaining": self.freeRoadsRemaining,
             "devCardPlayed": self.devCardPlayed,
@@ -264,6 +279,7 @@ class Game:
         node.building = buildingType
         node.owner = player
         player.points += BUILDING_POINTS[buildingType]
+        self.checkVictory(player)
         
     def runTurn(self, player: Player):
         self.requireNormalTurn(self.players.index(player))
@@ -292,6 +308,8 @@ class Game:
                     selected = action.chooseTarget(random.choice(action.getValidTargets()))
                 if selected and action.execute():
                     print(f"{player.name} {action.description()}")
+                    if self.winner is not None:
+                        return
                     break
             else:
                 break
@@ -306,10 +324,13 @@ class Game:
         for _ in range(roundCount):
             for _ in self.players:
                 self.runRandomTurn(self.players[self.currentPlayer])
+                if self.winner is not None:
+                    return
                 self.endTurn(self.currentPlayer)
     
     def throwDice(self) -> int:
-        diceResult: int = random.randint(1, 6) + random.randint(1, 6)
+        self.diceValues = (random.randint(1, 6), random.randint(1, 6))
+        diceResult = sum(self.diceValues)
         
         for tile in self.board.tiles:
             if tile.diceNumber == diceResult and not tile.isOccupiedByThief:

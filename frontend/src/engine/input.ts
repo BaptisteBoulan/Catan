@@ -1,55 +1,70 @@
 export class Input {
-    /** Called on canvas clicks with normalized device coordinates. Return true to skip the pointer lock. */
-    onClick?: (ndcX: number, ndcY: number) => boolean;
+    /** Called on canvas clicks (not drags) with normalized device coordinates. */
+    onClick?: (ndcX: number, ndcY: number) => void;
 
     private readonly keys = new Set<string>();
     private mouseDx = 0;
     private mouseDy = 0;
-    private readonly canvas: HTMLCanvasElement;
     private readonly abort = new AbortController();
 
     constructor(canvas: HTMLCanvasElement) {
-        this.canvas = canvas;
         const { signal } = this.abort;
+        let pressed = false;
+        let dragged = false;
+        let startX = 0;
+        let startY = 0;
+        let lastX = 0;
+        let lastY = 0;
 
-        canvas.addEventListener("click", (event) => {
-            canvas.focus();
-            // When locked, the ray goes through the center of the view.
-            let ndcX = 0;
-            let ndcY = 0;
-            if (!this.pointerLocked) {
-                const rect = canvas.getBoundingClientRect();
-                ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-                ndcY = 1 - ((event.clientY - rect.top) / rect.height) * 2;
-            }
-            if (this.onClick?.(ndcX, ndcY) || this.pointerLocked) return;
-            canvas.requestPointerLock().catch((error: unknown) => {
-                console.error("Failed to lock the canvas pointer", error);
-            });
+        canvas.addEventListener("mousedown", (event) => {
+            if (event.button !== 0) return;
+            canvas.focus({ preventScroll: true });
+            event.preventDefault();
+            pressed = true;
+            dragged = false;
+            startX = lastX = event.clientX;
+            startY = lastY = event.clientY;
         }, { signal });
         document.addEventListener("mousemove", (event) => {
-            if (!this.pointerLocked) return;
-            this.mouseDx += event.movementX;
-            this.mouseDy += event.movementY;
+            if (!pressed) return;
+            if (!(event.buttons & 1)) {
+                pressed = false;
+                return;
+            }
+            if (Math.hypot(event.clientX - startX, event.clientY - startY) >= 4) {
+                dragged = true;
+            }
+            if (dragged) {
+                this.mouseDx += event.clientX - lastX;
+                this.mouseDy += event.clientY - lastY;
+            }
+            lastX = event.clientX;
+            lastY = event.clientY;
+        }, { signal });
+        document.addEventListener("mouseup", (event) => {
+            if (event.button === 0) pressed = false;
+        }, { signal });
+        canvas.addEventListener("click", (event) => {
+            if (dragged) return;
+            const rect = canvas.getBoundingClientRect();
+            const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const ndcY = 1 - ((event.clientY - rect.top) / rect.height) * 2;
+            this.onClick?.(ndcX, ndcY);
         }, { signal });
         window.addEventListener("keydown", (event) => {
-            if (document.activeElement !== canvas && !this.pointerLocked) return;
+            if (document.activeElement !== canvas) return;
             this.keys.add(event.code);
             if (event.code === "Space") event.preventDefault();
         }, { signal });
         window.addEventListener("keyup", (event) => this.keys.delete(event.code), { signal });
-        window.addEventListener("blur", () => this.keys.clear(), { signal });
-        canvas.addEventListener("blur", () => this.keys.clear(), { signal });
-        document.addEventListener("pointerlockchange", () => {
-            if (!this.pointerLocked) {
-                this.keys.clear();
-                this.endFrame();
-            }
-        }, { signal });
-    }
-
-    get pointerLocked(): boolean {
-        return document.pointerLockElement === this.canvas;
+        const reset = () => {
+            pressed = false;
+            dragged = true;
+            this.keys.clear();
+            this.endFrame();
+        };
+        window.addEventListener("blur", reset, { signal });
+        canvas.addEventListener("blur", reset, { signal });
     }
 
     /** Mouse movement in pixels since the previous frame. */
@@ -74,6 +89,7 @@ export class Input {
 
     dispose(): void {
         this.abort.abort();
-        if (this.pointerLocked) document.exitPointerLock();
+        this.keys.clear();
+        this.endFrame();
     }
 }

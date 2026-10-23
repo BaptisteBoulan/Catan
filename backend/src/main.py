@@ -6,7 +6,7 @@ from time import monotonic
 from typing import Callable, Literal, TypeVar
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game, GameRuleError
 from .types.enum import Resource
@@ -25,6 +25,8 @@ class GameSession:
     game: Game
     createdAt: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     lastSeen: dict[int, float] = field(default_factory=dict[int, float])
+    chat: list[dict[str, object]] = field(default_factory=list)
+    replayLobby: bool = False
 
     def players(self) -> list[dict[str, object]]:
         now = monotonic()
@@ -70,6 +72,32 @@ class BuildRequest(BaseModel):
 class TradeRequest(BaseModel):
     give: Resource
     receive: Resource
+
+
+class ChatRequest(BaseModel):
+    text: str | None = Field(default=None, max_length=500)
+    recipientId: int | None = None
+    give: Resource | None = None
+    giveCount: int = Field(default=1, ge=1, le=19)
+    receive: Resource | None = None
+    receiveCount: int = Field(default=1, ge=1, le=19)
+
+    @field_validator("text")
+    @classmethod
+    def stripText(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+    @model_validator(mode="after")
+    def validateMessage(self):
+        isOffer = self.recipientId is not None or self.give is not None or self.receive is not None
+        if isOffer:
+            if self.recipientId is None or self.give is None or self.receive is None or self.text:
+                raise ValueError("A trade offer needs a recipient and two resource types, not a message.")
+            if self.give == self.receive:
+                raise ValueError("Choose different resources for a trade offer.")
+        elif not self.text:
+            raise ValueError("Enter a message.")
+        return self
 
 
 class PlayDevCardRequest(BaseModel):
@@ -174,6 +202,26 @@ def startGame(gameId: str, playerId: int):
         if len(session.lastSeen) < len(session.game.players):
             raise HTTPException(status_code=409, detail="Waiting for all players to join.")
         applyRule(session.game.start)
+        session.replayLobby = False
+        return sessionState(gameId, session)
+
+
+@app.post("/games/{gameId}/play-again")
+def playAgain(gameId: str, playerId: int) -> dict[str, object]:
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        if session.game.winner is None:
+            if session.replayLobby and not session.game.started:
+                return sessionState(gameId, session)
+            raise HTTPException(status_code=409, detail="The game is not over yet.")
+        game = Game(playerCount=len(session.game.players),
+                    boardSize=session.game.board.boardSize)
+        for index in session.lastSeen:
+            game.players[index].name = session.game.players[index].name
+        session.game = game
+        session.chat.clear()
+        session.replayLobby = True
         return sessionState(gameId, session)
 
 
@@ -202,6 +250,83 @@ def trade(gameId: str, playerId: int, request: TradeRequest):
         requirePlayer(session, playerId)
         applyRule(lambda: session.game.trade(playerId, request.give, request.receive))
         return sessionState(gameId, session)
+
+
+@app.get("/games/{gameId}/chat")
+def getChat(gameId: str, playerId: int) -> dict[str, object]:
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        return {"messages": session.chat}
+
+
+@app.post("/games/{gameId}/chat", status_code=201)
+def sendChat(gameId: str, playerId: int, request: ChatRequest) -> dict[str, object]:
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        message: dict[str, object] = {
+            "id": len(session.chat),
+            "senderId": playerId,
+            "recipientId": request.recipientId,
+            "text": request.text,
+            "give": request.give.value if request.give else None,
+            "giveCount": request.giveCount,
+            "receive": request.receive.value if request.receive else None,
+            "receiveCount": request.receiveCount,
+            "status": "pending" if request.recipientId is not None else None,
+            "createdAt": datetime.now(timezone.utc),
+        }
+        if request.recipientId is not None and request.recipientId not in session.lastSeen:
+            raise HTTPException(status_code=404, detail="Trade recipient not found.")
+        if request.recipientId == playerId:
+            raise HTTPException(status_code=422, detail="You cannot send a trade offer to yourself.")
+        if request.recipientId is not None:
+            applyRule(lambda: session.game.requireNormalTurn(playerId))
+            if session.game.diceRoll is None:
+                raise HTTPException(status_code=409, detail="The dice must be rolled before trading.")
+            if request.give is None or (
+                session.game.players[playerId].resources.count(request.give) < request.giveCount
+            ):
+                raise HTTPException(status_code=409, detail="You do not have enough resources for this offer.")
+        session.chat.append(message)
+        return {"messages": session.chat}
+
+
+@app.post("/games/{gameId}/chat/{messageId}/{decision}")
+def decideTradeOffer(
+    gameId: str, messageId: int, decision: Literal["accept", "decline"], playerId: int,
+) -> dict[str, object]:
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        if not 0 <= messageId < len(session.chat):
+            raise HTTPException(status_code=404, detail="Trade offer not found.")
+        offer = session.chat[messageId]
+        if offer["recipientId"] != playerId or offer["status"] != "pending":
+            raise HTTPException(status_code=409, detail="This trade offer is no longer available.")
+        if decision == "accept":
+            senderId = int(offer["senderId"])
+            game = session.game
+            applyRule(lambda: game.requireNormalTurn(senderId))
+            if game.diceRoll is None:
+                raise HTTPException(status_code=409, detail="The dice must be rolled before trading.")
+            give = Resource(str(offer["give"]))
+            receive = Resource(str(offer["receive"]))
+            sender = game.players[senderId]
+            recipient = game.players[playerId]
+            giveCount = int(offer["giveCount"])
+            receiveCount = int(offer["receiveCount"])
+            if sender.resources.count(give) < giveCount or recipient.resources.count(receive) < receiveCount:
+                raise HTTPException(status_code=409, detail="A player no longer has the offered resources.")
+            for _ in range(giveCount):
+                sender.resources.remove(give)
+            for _ in range(receiveCount):
+                recipient.resources.remove(receive)
+            sender.resources.extend([receive] * receiveCount)
+            recipient.resources.extend([give] * giveCount)
+        offer["status"] = "accepted" if decision == "accept" else "declined"
+        return {"messages": session.chat, "state": sessionState(gameId, session)}
 
 
 @app.post("/games/{gameId}/dev-card/{cardIndex}/play")
@@ -236,6 +361,9 @@ def endTurn(gameId: str, playerId: int):
         session = getSession(gameId)
         requirePlayer(session, playerId)
         applyRule(lambda: session.game.endTurn(playerId))
+        for message in session.chat:
+            if message["senderId"] == playerId and message["status"] == "pending":
+                message["status"] = "expired"
         return sessionState(gameId, session)
 
 

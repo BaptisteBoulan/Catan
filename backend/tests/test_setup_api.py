@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,121 @@ class SetupApiTests(unittest.IsolatedAsyncioTestCase):
         data = json.loads(b"".join(message.get("body", b"") for message in messages
                                    if message["type"] == "http.response.body"))
         return status, data
+
+    async def test_chat_messages_and_trade_offer_acceptance(self):
+        _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})
+        root = f"/games/{identity['gameId']}"
+        await self.request("POST", f"{root}/players", {"name": "Bob"})
+        game = games[identity["gameId"]].game
+        game.started = True
+        game.setupStep = None
+        game.currentPlayer = 0
+        game.diceRoll = 8
+        game.players[0].resources = [Resource.WOOD, Resource.WOOD, Resource.ORE]
+        game.players[1].resources = [Resource.BRICK, Resource.BRICK, Resource.WHEAT]
+
+        status, response = await self.request(
+            "POST", f"{root}/chat?playerId=0", {"text": "Anyone need wood?"})
+        self.assertEqual(status, 201)
+        self.assertEqual(response["messages"][0]["text"], "Anyone need wood?")
+        status, _ = await self.request(
+            "POST", f"{root}/chat?playerId=0",
+            {"recipientId": 1, "give": "wood", "giveCount": 4,
+             "receive": "brick", "receiveCount": 1})
+        self.assertEqual(status, 409)
+        status, response = await self.request(
+            "POST", f"{root}/chat?playerId=0",
+            {"recipientId": 1, "give": "wood", "giveCount": 2,
+             "receive": "brick", "receiveCount": 1})
+        self.assertEqual(status, 201)
+        offerId = response["messages"][1]["id"]
+        status, _ = await self.request(
+            "POST", f"{root}/chat/{offerId}/accept?playerId=0")
+        self.assertEqual(status, 409)
+        status, response = await self.request(
+            "POST", f"{root}/chat/{offerId}/accept?playerId=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(response["messages"][1]["status"], "accepted")
+        self.assertCountEqual(game.players[0].resources, [Resource.ORE, Resource.BRICK])
+        self.assertCountEqual(
+            game.players[1].resources,
+            [Resource.BRICK, Resource.WHEAT, Resource.WOOD, Resource.WOOD],
+        )
+        status, _ = await self.request(
+            "POST", f"{root}/chat/{offerId}/accept?playerId=1")
+        self.assertEqual(status, 409)
+        _, chat = await self.request("GET", f"{root}/chat?playerId=0")
+        self.assertEqual(chat["messages"], response["messages"])
+        game.players[0].resources.append(Resource.WOOD)
+        _, response = await self.request(
+            "POST", f"{root}/chat?playerId=0",
+            {"recipientId": 1, "give": "wood", "receive": "wheat"})
+        expiredId = response["messages"][-1]["id"]
+        status, _ = await self.request("POST", f"{root}/end-turn?playerId=0")
+        self.assertEqual(status, 200)
+        _, chat = await self.request("GET", f"{root}/chat?playerId=1")
+        self.assertEqual(chat["messages"][expiredId]["status"], "expired")
+
+    async def test_victory_and_concurrent_replay_keep_the_same_lobby(self):
+        _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})
+        root = f"/games/{identity['gameId']}"
+        await self.request("POST", f"{root}/players", {"name": "Bob"})
+        status, _ = await self.request("POST", f"{root}/play-again?playerId=0")
+        self.assertEqual(status, 409)
+        await self.request("POST", f"{root}/start?playerId=0")
+        session = games[identity["gameId"]]
+        game = session.game
+        with patch("backend.src.types.game.random.randint", return_value=3):
+            while game.setupStep is not None:
+                kind = game.setupKind
+                game.buildAt(game.currentPlayer, kind, game.buildTargets(game.currentPlayer, kind)[0])
+        game.players[0].points = 6
+        game.players[0].devCards = [VictoryPoint()]
+        session.chat.append({"status": "pending"})
+        status, state = await self.request("POST", f"{root}/dev-card/0/play?playerId=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["turn"]["winner"], 0)
+        _, heartbeat = await self.request("POST", f"{root}/players/1/heartbeat")
+        self.assertEqual(heartbeat["state"]["turn"], state["turn"])
+        self.assertEqual(heartbeat["state"]["players"], state["players"])
+        self.assertEqual(state["turn"]["diceValues"], [3, 3])
+        status, _ = await self.request("POST", f"{root}/end-turn?playerId=0")
+        self.assertEqual(status, 409)
+        status, _ = await self.request("POST", f"{root}/play-again?playerId=4")
+        self.assertEqual(status, 404)
+        results = await asyncio.gather(
+            self.request("POST", f"{root}/play-again?playerId=0"),
+            self.request("POST", f"{root}/play-again?playerId=1"),
+        )
+        self.assertTrue(all(status == 200 for status, _ in results))
+        self.assertEqual(results[0][1], results[1][1])
+        self.assertEqual(len(games), 1)
+        fresh = session.game
+        self.assertIsNot(fresh, game)
+        self.assertEqual([player.name for player in fresh.players], ["Alice", "Bob"])
+        self.assertEqual([player.color for player in fresh.players],
+                         [player.color for player in game.players])
+        self.assertTrue(all(player.points == 0 and not player.resources and not player.devCards
+                            for player in fresh.players))
+        self.assertTrue(all(node.owner is None for node in fresh.board.nodes))
+        self.assertTrue(all(edge.owner is None for edge in fresh.board.edges))
+        self.assertFalse(fresh.started)
+        self.assertIsNone(fresh.winner)
+        self.assertIsNone(fresh.diceValues)
+        self.assertEqual(session.chat, [])
+        status, replay = await self.request("POST", f"{root}/play-again?playerId=1")
+        self.assertEqual(status, 200)
+        self.assertIs(session.game, fresh)
+        self.assertEqual(replay["gameId"], identity["gameId"])
+        _, heartbeat = await self.request("POST", f"{root}/players/1/heartbeat")
+        self.assertEqual(heartbeat["state"], replay)
+        status, _ = await self.request("POST", f"{root}/start?playerId=1")
+        self.assertEqual(status, 403)
+        status, state = await self.request("POST", f"{root}/start?playerId=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["turn"]["setup"], {"round": 1, "kind": "settlement"})
+        status, _ = await self.request("POST", f"{root}/play-again?playerId=1")
+        self.assertEqual(status, 409)
 
     async def test_development_cards_validation_effects_and_heartbeat_sync(self):
         _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})

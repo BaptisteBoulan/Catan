@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { WebGpuCanvas } from './components/WebGpuCanvas'
 import type {
-  BuildKind, BuildTargetsDto, GameIdentityDto, GameSessionDto, JoinedPlayerDto,
-  PlacementKind, PlayDevCardRequestDto, ResourceCard, TradeRequestDto,
+  BuildKind, BuildTargetsDto, ChatMessageDto, ChatRequestDto, GameIdentityDto,
+  GameSessionDto, JoinedPlayerDto, PlacementKind, PlayDevCardRequestDto,
+  ResourceCard, TradeRequestDto,
 } from './game/api-types'
 import { createDemoScene, type GameScene } from './game/demo-scene'
 import './App.css'
@@ -31,6 +32,27 @@ function placementPath(kind: PlacementKind): string {
 }
 
 type GameLocation = Pick<GameIdentityDto, 'gameId' | 'playerId'>
+
+const DIE_PIPS = [
+  [4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8],
+]
+
+function Dice({ values, total }: { values: [number, number], total: number }) {
+  return (
+    <div className="dice-result" role="img"
+      aria-label={`Dice: ${values[0]} and ${values[1]}, total ${total}`}>
+      {values.map((value, index) => (
+        <svg key={index} className="die-face" viewBox="0 0 30 30" aria-hidden="true">
+          <rect x="1" y="1" width="28" height="28" rx="5" />
+          {DIE_PIPS[value - 1].map((pip) => (
+            <circle key={pip} cx={7 + (pip % 3) * 8} cy={7 + Math.floor(pip / 3) * 8} r="2.2" />
+          ))}
+        </svg>
+      ))}
+      <strong aria-hidden="true">= {total}</strong>
+    </div>
+  )
+}
 
 function readLocation(): GameLocation | null {
   const match = /^\/games\/([1-9]\d{3})\/players\/([0-4])\/?$/.exec(window.location.pathname)
@@ -64,16 +86,26 @@ function App() {
   const [tradeContext, setTradeContext] = useState<string | null>(null)
   const [tradeGive, setTradeGive] = useState<ResourceCard>('wood')
   const [tradeReceive, setTradeReceive] = useState<ResourceCard>('brick')
+  const [chatMessages, setChatMessages] = useState<ChatMessageDto[]>([])
+  const [chatText, setChatText] = useState('')
+  const [chatMode, setChatMode] = useState<'message' | 'offer'>('message')
+  const [offerRecipient, setOfferRecipient] = useState('')
+  const [offerGive, setOfferGive] = useState<ResourceCard>('wood')
+  const [offerReceive, setOfferReceive] = useState<ResourceCard>('brick')
+  const [offerGiveCount, setOfferGiveCount] = useState(1)
+  const [offerReceiveCount, setOfferReceiveCount] = useState(1)
+  const [isChatActing, setIsChatActing] = useState(false)
+  const [chatError, setChatError] = useState<string | null>(null)
   const [cardChoice, setCardChoice] = useState<{ index: number, context: string } | null>(null)
   const [cardResource, setCardResource] = useState<ResourceCard>('wood')
   const [secondCardResource, setSecondCardResource] = useState<ResourceCard>('wood')
   const gameRevision = useRef(0)
   const placementContext = JSON.stringify(game?.turn)
-  const setupKind = game?.turn.started && game.turn.currentPlayer === location?.playerId
+  const setupKind = game?.turn.started && game.turn.winner === null && game.turn.currentPlayer === location?.playerId
     ? game.turn.setup?.kind : undefined
   const setupRound = game?.turn.setup?.round
   const requiredKind = setupKind ?? (
-    game && game.turn.currentPlayer === location?.playerId
+    game && game.turn.winner === null && game.turn.currentPlayer === location?.playerId
       ? game.turn.thiefMovePending ? 'thief' : game.turn.freeRoadsRemaining ? 'road' : undefined
       : undefined
   )
@@ -139,6 +171,36 @@ function App() {
   }, [location])
 
   useEffect(() => {
+    if (!location) return
+    const abort = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const { gameId, playerId } = location
+
+    async function updateChat() {
+      try {
+        const result = await apiRequest<{ messages: ChatMessageDto[] }>(
+          `/games/${gameId}/chat?playerId=${playerId}`, { signal: abort.signal },
+        )
+        if (!abort.signal.aborted) {
+          setChatMessages(result.messages)
+          setChatError(null)
+        }
+      } catch (cause) {
+        if (!abort.signal.aborted) {
+          setChatError(cause instanceof Error ? cause.message : String(cause))
+        }
+      }
+      if (!abort.signal.aborted) timer = setTimeout(() => void updateChat(), 3000)
+    }
+
+    void updateChat()
+    return () => {
+      abort.abort()
+      clearTimeout(timer)
+    }
+  }, [location])
+
+  useEffect(() => {
     if (!location || !requiredKind) return
     const abort = new AbortController()
     const { gameId, playerId } = location
@@ -188,6 +250,7 @@ function App() {
   }, [location])
 
   const isPlacing = !!placement && !!game?.turn.started
+    && game.turn.winner === null
     && placement.context === placementContext
     && game.turn.currentPlayer === location?.playerId
     && (!game.turn.setup || placement.kind === game.turn.setup.kind)
@@ -212,6 +275,8 @@ function App() {
     setError(null)
     setPresenceError(null)
     setActionError(null)
+    setChatError(null)
+    setChatMessages([])
     setPlacement(null)
     setTradeContext(null)
     setCardChoice(null)
@@ -242,7 +307,7 @@ function App() {
   }
 
   async function gameAction(
-    action: 'start' | 'dev-card' | 'end-turn' | 'trade' | `dev-card/${number}/play`,
+    action: 'start' | 'play-again' | 'dev-card' | 'end-turn' | 'trade' | `dev-card/${number}/play`,
     request?: TradeRequestDto | PlayDevCardRequestDto,
   ) {
     if (!location || gameRevision.current % 2 !== 0) return
@@ -264,6 +329,12 @@ function App() {
       )
       setGame(session)
       setPlayers(session.joinedPlayers)
+      if (action === 'play-again') {
+        setChatMessages([])
+        setChatText('')
+        setChatMode('message')
+        setChatError(null)
+      }
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -290,6 +361,59 @@ function App() {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  async function submitChat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!location || isChatActing) return
+    if (chatMode === 'offer' && !canOfferTrade) return
+    const request: ChatRequestDto = chatMode === 'message'
+      ? { text: chatText.trim() }
+      : {
+        recipientId: Number(offerRecipient),
+        give: offerGive,
+        giveCount: offerGiveCount,
+        receive: offerReceive,
+        receiveCount: offerReceiveCount,
+      }
+    setIsChatActing(true)
+    setChatError(null)
+    try {
+      const result = await apiRequest<{ messages: ChatMessageDto[] }>(
+        `/games/${location.gameId}/chat?playerId=${location.playerId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        },
+      )
+      setChatMessages(result.messages)
+      setChatText('')
+    } catch (cause) {
+      setChatError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setIsChatActing(false)
+    }
+  }
+
+  async function decideOffer(messageId: number, decision: 'accept' | 'decline') {
+    if (!location || isChatActing) return
+    setIsChatActing(true)
+    setChatError(null)
+    try {
+      const result = await apiRequest<{
+        messages: ChatMessageDto[];
+        state: GameSessionDto;
+      }>(`/games/${location.gameId}/chat/${messageId}/${decision}?playerId=${location.playerId}`, {
+        method: 'POST',
+      })
+      setChatMessages(result.messages)
+      setGame(result.state)
+      setPlayers(result.state.joinedPlayers)
+    } catch (cause) {
+      setChatError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setIsChatActing(false)
     }
   }
 
@@ -326,7 +450,10 @@ function App() {
   const connectedPlayers = players.filter((player) => player.connected)
   const turn = game?.turn
   const turnPlayer = turn?.started ? game?.players[turn.currentPlayer] : undefined
-  const isMyTurn = !!turn?.started && turn.currentPlayer === location.playerId
+  const winner = turn?.winner != null ? game?.players[turn.winner] : undefined
+  const isMyTurn = !!turn?.started && !winner && turn.currentPlayer === location.playerId
+  const canOfferTrade = isMyTurn && turn?.diceRoll !== null && !turn.setup
+    && !turn.thiefMovePending && turn.freeRoadsRemaining === 0
   const isFull = !!game && players.length >= game.players.length
   const isHost = location.playerId === 0
   const resourceCount = (kind: ResourceCard) =>
@@ -337,11 +464,28 @@ function App() {
 
   return (
     <main className="app">
-      <aside className="sidebar">
+      {winner && (
+        <div className="game-result-backdrop">
+          <section className="game-result" role="dialog" aria-modal="true"
+            aria-labelledby="game-result-title" aria-describedby="game-result-description">
+            <h1 id="game-result-title">{winner.id === location.playerId ? 'Victory!' : 'Defeat'}</h1>
+            <p id="game-result-description">
+              {winner.name} wins with {winner.points} points!
+            </p>
+            <p>Play again in the same lobby with the same players.</p>
+            <button autoFocus disabled={isActing} onClick={() => void gameAction('play-again')}>
+              {isActing ? 'Returning to lobby...' : 'Play again'}
+            </button>
+            {actionError && <p role="alert">{actionError}</p>}
+          </section>
+        </div>
+      )}
+      <aside className="sidebar" inert={!!winner}>
         <h1>Game {location.gameId}</h1>
         {currentPlayer && <p>Playing as <strong>{currentPlayer.name}</strong></p>}
         {game && <p className="created-at">Created {new Date(game.createdAt).toLocaleString()}</p>}
-        {game && (turnPlayer ? (
+        {game && <p className="victory-points">First to {game.turn.winningPoints} points wins</p>}
+        {game && (winner ? <p className="turn-status">{winner.name} wins!</p> : turnPlayer ? (
           <p className="turn-status">
             {turn?.setup ? `Setup round ${turn.setup.round}` : `Turn ${turn?.turnNumber}`}:{' '}
             <span className="player-color" style={{ backgroundColor: turnPlayer.color }} />
@@ -355,6 +499,9 @@ function App() {
               ) : <p>Waiting for the host to start the game...</p>}
           </div>
         ))}
+        {turn?.diceValues && turn.diceRoll !== null && (
+          <Dice values={turn.diceValues} total={turn.diceRoll} />
+        )}
         <h2>Connected players ({connectedPlayers.length})</h2>
         <ul aria-label="Connected players">
           {connectedPlayers.map((player) => (
@@ -463,19 +610,20 @@ function App() {
         {actionError && !isMyTurn && <p role="alert">{actionError}</p>}
         <button onClick={() => navigate(null)}>Back to lobby</button>
       </aside>
-      <section className="board-area" aria-label="Game board">
+      <section className="board-area" aria-label="Game board" inert={!!winner}>
         {game ? <WebGpuCanvas createScene={createDemoScene} updateScene={updateScene} className="game-canvas" />
           : <p role={error ? 'alert' : 'status'}>{error ?? 'Loading game...'}</p>}
       </section>
-      {isMyTurn && turn && (
-        <aside className="action-panel" aria-label="Turn actions">
+      <aside className="action-panel" aria-label="Turn actions and chat" inert={!!winner}>
+        {isMyTurn && turn && (
+          <section className="turn-actions">
           <h2>{turn.setup ? `Starting placements: round ${turn.setup.round}` : 'Your turn'}</h2>
           <p className="dice-result">
             {turn.setup
               ? turn.setup.kind === 'settlement'
                 ? 'Place your starting settlement.'
                 : 'Place a road connected to the settlement you just placed.'
-              : turn.diceRoll === null ? 'Waiting for the automatic dice roll...' : `🎲 You rolled ${turn.diceRoll}.`}
+              : turn.diceRoll === null ? 'Waiting for the automatic dice roll...' : `You rolled ${turn.diceRoll}.`}
           </p>
           <div className="action-buttons">
             {turn.setup ? (
@@ -580,8 +728,115 @@ function App() {
           )}
           {isPlacing && <p className="placement-hint">Click a highlighted slot on the board.</p>}
           {actionError && <p role="alert">{actionError}</p>}
-        </aside>
-      )}
+          </section>
+        )}
+        <section className="chat-panel" aria-label="Game chat">
+          <h2>Chat</h2>
+          <div className="chat-messages" aria-live="polite">
+            {chatMessages.length === 0
+              ? <p className="empty-cards">No messages yet. Start the conversation!</p>
+              : chatMessages.map((message) => {
+                const sender = game?.players.find((player) => player.id === message.senderId)
+                const recipient = game?.players.find((player) => player.id === message.recipientId)
+                const isOffer = message.recipientId !== null
+                return (
+                  <article className={`chat-message${isOffer ? ' trade-offer' : ''}`} key={message.id}>
+                    <p className="chat-message-author">
+                      {sender?.name ?? `Player ${message.senderId + 1}`}
+                      {isOffer && <> offers {recipient?.name ?? `Player ${Number(message.recipientId) + 1}`}</>}
+                    </p>
+                    {isOffer ? (
+                      <>
+                        <p className="offer-details">
+                          {message.giveCount} {message.give} for {message.receiveCount} {message.receive}
+                        </p>
+                        <p className="offer-status">
+                          {message.status === 'pending' ? 'Offer pending' : `Offer ${message.status}`}
+                        </p>
+                        {message.status === 'pending' && message.recipientId === location.playerId && (
+                          <div className="offer-actions">
+                            <button disabled={isChatActing || !!winner}
+                              onClick={() => void decideOffer(message.id, 'accept')}>Accept</button>
+                            <button className="secondary-button" disabled={isChatActing || !!winner}
+                              onClick={() => void decideOffer(message.id, 'decline')}>Decline</button>
+                          </div>
+                        )}
+                      </>
+                    ) : <p className="chat-message-text">{message.text}</p>}
+                  </article>
+                )
+              })}
+          </div>
+          <form className="chat-form" onSubmit={(event) => void submitChat(event)}>
+            <div className="chat-mode">
+              <button type="button" className={chatMode === 'message' ? 'selected' : 'secondary-button'}
+                aria-pressed={chatMode === 'message'} onClick={() => setChatMode('message')}>Message</button>
+              <button type="button" className={chatMode === 'offer' ? 'selected' : 'secondary-button'}
+                aria-pressed={chatMode === 'offer'} onClick={() => setChatMode('offer')}>Trade offer</button>
+            </div>
+            {chatMode === 'message' ? (
+              <label className="chat-message-input">
+                <span className="visually-hidden">Message</span>
+                <input value={chatText} maxLength={500} placeholder="Write a message..."
+                  onChange={(event) => setChatText(event.target.value)} />
+              </label>
+            ) : (
+              <div className="chat-offer-form">
+                <label htmlFor="offer-recipient">Offer to</label>
+                <select id="offer-recipient" value={offerRecipient}
+                  onChange={(event) => setOfferRecipient(event.target.value)} required>
+                  <option value="" disabled>Select a player</option>
+                  {game?.players.filter((player) => player.id !== location.playerId).map((player) => (
+                    <option key={player.id} value={player.id}>{player.name}</option>
+                  ))}
+                </select>
+                <label htmlFor="offer-give">You give</label>
+                <div className="offer-resource-row">
+                  <input id="offer-give-count" aria-label="Amount you give" type="number"
+                    min={1} max={19} value={offerGiveCount}
+                    onChange={(event) => setOfferGiveCount(Number(event.target.value))} />
+                  <select id="offer-give" value={offerGive}
+                    onChange={(event) => {
+                      const resource = RESOURCES.find(({ kind }) => kind === event.target.value)
+                      if (resource) {
+                        setOfferGive(resource.kind)
+                        if (offerReceive === resource.kind) {
+                          setOfferReceive(resource.kind === 'wood' ? 'brick' : 'wood')
+                        }
+                      }
+                    }}>
+                    {RESOURCES.map(({ kind, label }) => (
+                      <option value={kind} key={kind}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <label htmlFor="offer-receive">You receive</label>
+                <div className="offer-resource-row">
+                  <input id="offer-receive-count" aria-label="Amount you receive" type="number"
+                    min={1} max={19} value={offerReceiveCount}
+                    onChange={(event) => setOfferReceiveCount(Number(event.target.value))} />
+                  <select id="offer-receive" value={offerReceive}
+                    onChange={(event) => {
+                      const resource = RESOURCES.find(({ kind }) => kind === event.target.value)
+                      if (resource) setOfferReceive(resource.kind)
+                    }}>
+                    {RESOURCES.map(({ kind, label }) => (
+                      <option value={kind} key={kind} disabled={kind === offerGive}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                {!canOfferTrade && (
+                  <p className="offer-status">Trade offers can be sent on your turn after rolling the dice.</p>
+                )}
+              </div>
+            )}
+            <button disabled={isChatActing || (chatMode === 'message'
+              ? !chatText.trim()
+              : !canOfferTrade || !offerRecipient || offerGive === offerReceive)}>Send {chatMode}</button>
+          </form>
+          {chatError && <p role="alert">{chatError}</p>}
+        </section>
+      </aside>
     </main>
   )
 }

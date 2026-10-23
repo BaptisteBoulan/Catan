@@ -40,6 +40,14 @@ used; used cards stay in your hand for future mechanics. Hover for the reason
 a card is unavailable. Click a green card to play it.
 
 Sessions live only in the backend's `games` dictionary and disappear on restart.
+The first player to reach **7 points** wins immediately, through buildings or
+playing Victory Point cards. Finished games reject further gameplay actions and
+show a Victory or Defeat screen to each player, including after a refresh.
+**Play again** returns everyone to a fresh lobby with the exact same game ID,
+names, colors and player slots. Any player can click it; simultaneous clicks
+reuse the same fresh lobby without resetting it twice. The host starts the next
+game. The board, hands, points, chat and turn state are reset.
+Both individual dice faces and their total are shown to every player.
 Run one backend worker: this in-memory store is not shared across processes.
 There are no accounts or authentication; anyone with a player URL can use that
 identity. These URLs are identifiers for local development, not secure credentials.
@@ -53,6 +61,8 @@ Backend routes (under `/api` through Vite):
 - `GET /games/{gameId}?playerId={playerId}` for the board and session metadata
 - `POST /games/{gameId}/players/{playerId}/heartbeat` for live player presence
 - `POST /games/{gameId}/start?playerId=0` to begin setup once all slots are claimed
+- `POST /games/{gameId}/play-again?playerId={playerId}` to reset a finished game
+  to the same lobby (repeated requests in that lobby are idempotent)
 - `GET /games/{gameId}/build/{kind}/targets?playerId={playerId}` for valid placement slots
 - `POST /games/{gameId}/build/{kind}?playerId={playerId}` with `{ "target": 12 }`
   to place a piece (`kind` is `settlement`, `road`, or `city`)
@@ -193,7 +203,7 @@ changing it destroys the previous engine and starts a new scene.
 The factory is synchronous; perform asynchronous asset loading in `updateScene`.
 Changing `updateScene` cancels the previous update, but does not recreate the engine.
 Unmounting cancels initialization and releases the frame loop, input listeners,
-resize observer, pointer lock and GPU device, including under React Strict Mode.
+resize observer and GPU device, including under React Strict Mode.
 
 ## OBJ meshes
 
@@ -218,10 +228,12 @@ uses this loader to create the scene object asynchronously.
 
 ## Controls
 
-- Click the canvas to focus it and lock the pointer; move the mouse to look.
+- Hold the left mouse button and drag on the canvas to look. The cursor stays
+  visible and is never locked; releasing the button stops mouse look.
+- Click without dragging to select a highlighted placement target.
 - WASD (ZQSD on AZERTY) moves horizontally.
 - Space moves up; Shift moves down.
-- Escape releases pointer lock.
 
-Keyboard input only affects a focused or pointer-locked canvas, so other React
-controls can coexist with the scene.
+Keyboard input only affects a focused canvas, so other React controls can coexist
+with the scene. Clicking or dragging the canvas focuses it for keyboard movement.
+The game stays within the viewport; the player and action panels scroll independently.

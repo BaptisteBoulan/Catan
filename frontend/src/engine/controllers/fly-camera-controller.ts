@@ -1,6 +1,6 @@
 import { SceneObject, type UpdateContext } from "../scene-object";
 
-/** Drives the scene camera with WASD + Space/Shift and mouse look (pointer lock). */
+/** Drives the scene camera with WASD + Space/Shift and left-button drag to look. */
 export class FlyCameraController extends SceneObject {
     update({ dt, input, scene }: UpdateContext): void {
         const camera = scene.camera;

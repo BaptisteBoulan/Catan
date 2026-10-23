@@ -24,6 +24,28 @@ export type TradeRequestDto = {
     receive: ResourceCard;
 };
 
+export type ChatMessageDto = {
+    id: number;
+    senderId: number;
+    recipientId: number | null;
+    text: string | null;
+    give: ResourceCard | null;
+    giveCount: number;
+    receive: ResourceCard | null;
+    receiveCount: number;
+    status: 'pending' | 'accepted' | 'declined' | 'expired' | null;
+    createdAt: string;
+};
+
+export type ChatRequestDto = {
+    text?: string;
+    recipientId?: number;
+    give?: ResourceCard;
+    giveCount?: number;
+    receive?: ResourceCard;
+    receiveCount?: number;
+};
+
 export type DevCardDto = {
     name: string;
     color: string;
@@ -64,6 +86,9 @@ export type TurnDto = {
     currentPlayer: number;
     turnNumber: number;
     diceRoll: number | null;
+    diceValues: [number, number] | null;
+    winner: number | null;
+    winningPoints: number;
     thiefMovePending: boolean;
     freeRoadsRemaining: number;
     devCardPlayed: boolean;
