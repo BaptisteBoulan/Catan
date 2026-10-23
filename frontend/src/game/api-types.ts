@@ -40,8 +40,16 @@ export type EdgeDto = {
     owner: number | null;
 };
 
+export type TurnDto = {
+    started: boolean;
+    currentPlayer: number;
+    turnNumber: number;
+    diceRoll: number | null;
+};
+
 export type GameDto = {
     players: PlayerDto[];
+    turn: TurnDto;
     board: {
         boardSize: number;
         tiles: TileDto[];

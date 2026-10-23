@@ -25,14 +25,16 @@ class Player:
             self.resources.remove(resource)
         return True
     
-    def payResources(self, resources: dict[Resource, int]) -> bool:
+    def canPayResources(self, resources: dict[Resource, int]) -> bool:
         for resource, count in resources.items():
             if self.getResourceCount(resource) < count:
                 return False
+        return True
+    
+    def payResources(self, resources: dict[Resource, int]):
         for resource, count in resources.items():
             for _ in range(count):
                 self.resources.remove(resource)
-        return True
 
     def serialize(self) -> dict[str, object]:
         return {

@@ -3,15 +3,17 @@ from datetime import datetime, timezone
 import secrets
 from threading import RLock
 from time import monotonic
+from typing import Callable
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game
+from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game, GameRuleError
 
 app = FastAPI()
 
 PRESENCE_TIMEOUT = 15
+HOST_PLAYER_ID = 0
 
 
 @dataclass
@@ -113,24 +115,77 @@ def getGame(gameId: str, playerId: int) -> dict[str, object]:
     with gamesLock:
         session = getSession(gameId)
         requirePlayer(session, playerId)
-        return {
-            **session.game.serialize(),
-            "gameId": gameId,
-            "createdAt": session.createdAt,
-            "joinedPlayers": session.players(),
-        }
+        return sessionState(gameId, session)
+
+
+def sessionState(gameId: str, session: GameSession) -> dict[str, object]:
+    return {
+        **session.game.serialize(),
+        "gameId": gameId,
+        "createdAt": session.createdAt,
+        "joinedPlayers": session.players(),
+    }
 
 
 @app.post("/games/{gameId}/players/{playerId}/heartbeat")
-def heartbeat(gameId: str, playerId: int):
+def heartbeat(gameId: str, playerId: int) -> dict[str, object]:
     with gamesLock:
         session = getSession(gameId)
         requirePlayer(session, playerId)
         session.lastSeen[playerId] = monotonic()
-        return {"players": session.players()}
+        return {"players": session.players(), "turn": session.game.serializeTurn()}
+
+
+def applyRule(action: Callable[[], object]) -> None:
+    try:
+        action()
+    except GameRuleError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/games/{gameId}/start")
+def startGame(gameId: str, playerId: int):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        if playerId != HOST_PLAYER_ID:
+            raise HTTPException(status_code=403, detail="Only the host can start the game.")
+        if len(session.lastSeen) < len(session.game.players):
+            raise HTTPException(status_code=409, detail="Waiting for all players to join.")
+        applyRule(session.game.start)
+        return sessionState(gameId, session)
+
+
+@app.post("/games/{gameId}/roll")
+def rollDice(gameId: str, playerId: int):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.rollDice(playerId))
+        return sessionState(gameId, session)
+
+
+@app.post("/games/{gameId}/dev-card")
+def buyDevCard(gameId: str, playerId: int):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.buyDevCard(playerId))
+        return sessionState(gameId, session)
+
+
+@app.post("/games/{gameId}/end-turn")
+def endTurn(gameId: str, playerId: int):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        applyRule(lambda: session.game.endTurn(playerId))
+        return sessionState(gameId, session)
 
 
 def replaceBoard(session: GameSession, request: NewBoardRequest) -> None:
+    if session.game.started:
+        raise HTTPException(status_code=409, detail="Cannot replace the board after the game started.")
     if request.playerCount < len(session.lastSeen):
         raise HTTPException(status_code=409, detail="Cannot remove joined players.")
     game = Game(playerCount=request.playerCount)

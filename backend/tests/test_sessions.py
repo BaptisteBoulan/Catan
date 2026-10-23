@@ -186,6 +186,45 @@ class SessionTests(unittest.TestCase):
         self.request("POST", f"/games/{firstId}/demo-game?playerId=0",
                      {"playerCount": 3, "roundCount": 0})
 
+    def test_turn_cycle(self):
+        gameId = self.create()["gameId"]
+        self.assertFalse(self.request("GET", f"/games/{gameId}?playerId=0")["turn"]["started"])
+        self.request("POST", f"/games/{gameId}/start?playerId=0", expected=409)
+        self.request("POST", f"/games/{gameId}/players", {"name": "Bob"}, 201)
+        self.request("POST", f"/games/{gameId}/roll?playerId=0", expected=409)
+        self.request("POST", f"/games/{gameId}/start?playerId=1", expected=403)
+        started = self.request("POST", f"/games/{gameId}/start?playerId=0")
+        self.assertEqual(started["turn"], {"started": True, "currentPlayer": 0,
+                                           "turnNumber": 1, "diceRoll": None})
+        self.request("POST", f"/games/{gameId}/start?playerId=0", expected=409)
+        self.request("POST", f"/games/{gameId}/new-board?playerId=0", {"playerCount": 2}, 409)
+
+        self.request("POST", f"/games/{gameId}/end-turn?playerId=0", expected=409)
+        self.request("POST", f"/games/{gameId}/roll?playerId=1", expected=409)
+        rolled = self.request("POST", f"/games/{gameId}/roll?playerId=0")
+        self.assertIn(rolled["turn"]["diceRoll"], range(2, 13))
+        self.request("POST", f"/games/{gameId}/roll?playerId=0", expected=409)
+        self.request("POST", f"/games/{gameId}/end-turn?playerId=1", expected=409)
+
+        with gamesLock:
+            games[gameId].game.players[0].resources[:] = [
+                Resource.SHEEP, Resource.WHEAT, Resource.ORE]
+        bought = self.request("POST", f"/games/{gameId}/dev-card?playerId=0")
+        self.assertEqual(len(bought["players"][0]["devCards"]), 1)
+        self.request("POST", f"/games/{gameId}/dev-card?playerId=0", expected=409)
+
+        ended = self.request("POST", f"/games/{gameId}/end-turn?playerId=0")
+        self.assertEqual(ended["turn"]["currentPlayer"], 1)
+        self.assertEqual(ended["turn"]["turnNumber"], 2)
+        self.assertIsNone(ended["turn"]["diceRoll"])
+        presence = self.request("POST", f"/games/{gameId}/players/0/heartbeat")
+        self.assertEqual(presence["turn"]["currentPlayer"], 1)
+
+        self.request("POST", f"/games/{gameId}/roll?playerId=1")
+        wrapped = self.request("POST", f"/games/{gameId}/end-turn?playerId=1")
+        self.assertEqual(wrapped["turn"]["currentPlayer"], 0)
+        self.assertEqual(wrapped["turn"]["turnNumber"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

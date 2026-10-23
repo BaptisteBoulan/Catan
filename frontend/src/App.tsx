@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { WebGpuCanvas } from './components/WebGpuCanvas'
-import type { GameIdentityDto, GameSessionDto, JoinedPlayerDto } from './game/api-types'
+import type { GameIdentityDto, GameSessionDto, JoinedPlayerDto, TurnDto } from './game/api-types'
 import { createDemoScene } from './game/demo-scene'
 import './App.css'
 
-const MIN_PLAYERS = 2
+const MIN_PLAYERS = 1
 const MAX_PLAYERS = 5
 
 type GameLocation = Pick<GameIdentityDto, 'gameId' | 'playerId'>
@@ -35,6 +35,8 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [presenceError, setPresenceError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [isActing, setIsActing] = useState(false)
 
   useEffect(() => {
     const onPopState = () => {
@@ -56,7 +58,7 @@ function App() {
 
     async function updatePresence() {
       try {
-        const result = await apiRequest<{ players: JoinedPlayerDto[] }>(
+        const result = await apiRequest<{ players: JoinedPlayerDto[], turn: TurnDto }>(
           `/games/${gameId}/players/${playerId}/heartbeat`,
           { method: 'POST', signal: abort.signal },
         )
@@ -64,6 +66,7 @@ function App() {
         setPlayers(result.players)
         setGame((current) => current && ({
           ...current,
+          turn: result.turn,
           players: current.players.map((player) =>
             result.players.find((joinedPlayer) => joinedPlayer.id === player.id) ?? player),
         }))
@@ -110,7 +113,25 @@ function App() {
     setPlayers([])
     setError(null)
     setPresenceError(null)
+    setActionError(null)
     setLocation(next)
+  }
+
+  async function gameAction(action: 'start' | 'roll' | 'dev-card' | 'end-turn') {
+    if (!location) return
+    setIsActing(true)
+    setActionError(null)
+    try {
+      const session = await apiRequest<GameSessionDto>(
+        `/games/${location.gameId}/${action}?playerId=${location.playerId}`, { method: 'POST' },
+      )
+      setGame(session)
+      setPlayers(session.joinedPlayers)
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setIsActing(false)
+    }
   }
 
   async function enterGame(event: FormEvent<HTMLFormElement>, joining: boolean) {
@@ -165,6 +186,11 @@ function App() {
 
   const currentPlayer = game?.players.find((player) => player.id === location.playerId)
   const connectedPlayers = players.filter((player) => player.connected)
+  const turn = game?.turn
+  const turnPlayer = turn?.started ? game?.players[turn.currentPlayer] : undefined
+  const isMyTurn = !!turn?.started && turn.currentPlayer === location.playerId
+  const isFull = !!game && players.length >= game.players.length
+  const isHost = location.playerId === 0
 
   return (
     <main className="app">
@@ -172,6 +198,20 @@ function App() {
         <h1>Game {location.gameId}</h1>
         {currentPlayer && <p>Playing as <strong>{currentPlayer.name}</strong></p>}
         {game && <p className="created-at">Created {new Date(game.createdAt).toLocaleString()}</p>}
+        {game && (turnPlayer ? (
+          <p className="turn-status">
+            Turn {turn?.turnNumber}:{' '}
+            <span className="player-color" style={{ backgroundColor: turnPlayer.color }} />
+            <strong>{isMyTurn ? 'your turn' : turnPlayer.name}</strong>
+          </p>
+        ) : (
+          <div className="turn-status">
+            {!isFull ? <p>Waiting for players ({players.length}/{game.players.length})...</p>
+              : isHost ? (
+                <button disabled={isActing} onClick={() => void gameAction('start')}>Start game</button>
+              ) : <p>Waiting for the host to start the game...</p>}
+          </div>
+        ))}
         <h2>Connected players ({connectedPlayers.length})</h2>
         <ul aria-label="Connected players">
           {connectedPlayers.map((player) => (
@@ -220,12 +260,31 @@ function App() {
           ))}
         </div>
         {presenceError && <p role="alert">Connection lost: {presenceError}. Retrying...</p>}
+        {actionError && !isMyTurn && <p role="alert">{actionError}</p>}
         <button onClick={() => navigate(null)}>Back to lobby</button>
       </aside>
       <section className="board-area" aria-label="Game board">
         {game ? <WebGpuCanvas createScene={createScene} className="game-canvas" />
           : <p role={error ? 'alert' : 'status'}>{error ?? 'Loading game...'}</p>}
       </section>
+      {isMyTurn && turn && (
+        <aside className="action-panel" aria-label="Turn actions">
+          <h2>Your turn</h2>
+          <p className="dice-result">
+            {turn.diceRoll === null ? 'Roll the dice to start your turn.' : `You rolled ${turn.diceRoll}.`}
+          </p>
+          <div className="action-buttons">
+            <button disabled={isActing || turn.diceRoll !== null}
+              onClick={() => void gameAction('roll')}>Roll dice</button>
+            <button disabled={isActing || turn.diceRoll === null}
+              title="Costs 1 sheep, 1 wheat and 1 ore"
+              onClick={() => void gameAction('dev-card')}>Buy development card</button>
+            <button className="end-turn" disabled={isActing || turn.diceRoll === null}
+              onClick={() => void gameAction('end-turn')}>Next turn</button>
+          </div>
+          {actionError && <p role="alert">{actionError}</p>}
+        </aside>
+      )}
     </main>
   )
 }

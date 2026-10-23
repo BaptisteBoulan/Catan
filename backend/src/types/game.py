@@ -3,13 +3,17 @@ import random
 from .enum import BuildingType, Resource
 from .devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
 
-from .action import Action, BuildCity, BuildRoad, BuildSettlement
+from .action import BuildCity, BuildRoad, BuildSettlement, DrawDevCard
 from .board import Board, Node
 from .enum import Color
 from .player import Player
 
-MIN_PLAYERS = 2
+MIN_PLAYERS = 1
 MAX_PLAYERS = 5
+
+
+class GameRuleError(ValueError):
+    pass
 
 BUILDING_POINTS = {
     BuildingType.SETTLEMENT: 1,
@@ -49,6 +53,56 @@ class Game:
         self.board = Board(boardSize)
         self.placeInitialBuildings()
         self.setDevCardDeck()
+        self.started = False
+        self.currentPlayer = 0
+        self.turnNumber = 0
+        self.diceRoll: int | None = None
+
+    def start(self):
+        if self.started:
+            raise GameRuleError("The game has already started.")
+        self.started = True
+        self.currentPlayer = 0
+        self.turnNumber = 1
+        self.diceRoll = None
+
+    def requireTurn(self, playerIndex: int):
+        if not self.started:
+            raise GameRuleError("The game has not started yet.")
+        if playerIndex != self.currentPlayer:
+            raise GameRuleError("It is not your turn.")
+
+    def rollDice(self, playerIndex: int) -> int:
+        self.requireTurn(playerIndex)
+        if self.diceRoll is not None:
+            raise GameRuleError("You already rolled the dice this turn.")
+        self.diceRoll = self.throwDice()
+        return self.diceRoll
+
+    def buyDevCard(self, playerIndex: int):
+        self.requireTurn(playerIndex)
+        if self.diceRoll is None:
+            raise GameRuleError("Roll the dice first.")
+        if not self.devCardDeck:
+            raise GameRuleError("No development cards left.")
+        if not DrawDevCard(self.players[playerIndex], self).execute():
+            raise GameRuleError("Not enough resources (needs sheep, wheat and ore).")
+
+    def endTurn(self, playerIndex: int):
+        self.requireTurn(playerIndex)
+        if self.diceRoll is None:
+            raise GameRuleError("Roll the dice before ending your turn.")
+        self.currentPlayer = (self.currentPlayer + 1) % len(self.players)
+        self.turnNumber += 1
+        self.diceRoll = None
+
+    def serializeTurn(self) -> dict[str, object]:
+        return {
+            "started": self.started,
+            "currentPlayer": self.currentPlayer,
+            "turnNumber": self.turnNumber,
+            "diceRoll": self.diceRoll,
+        }
 
     def placeInitialBuildings(self, maxAttempts: int = 100):
         candidates = self.board.nodes
@@ -99,14 +153,20 @@ class Game:
         """Throws the dice, then plays random actions until none can be executed."""
         self.runTurn(player)
         while True:
-            actions: list[Action] = [
-                *(BuildRoad(player, edge, self) for edge in self.board.edges),
-                *(BuildSettlement(player, node, self) for node in self.board.nodes),
-                *(BuildCity(player, node, self) for node in self.board.nodes),
+            actions: list[BuildRoad | BuildSettlement | BuildCity] = [
+                BuildRoad(player, self),
+                BuildSettlement(player, self),
+                BuildCity(player, self),
             ]
             random.shuffle(actions)
             for action in actions:
-                if action.execute():
+                if not action.canBeExecuted():
+                    continue
+                if isinstance(action, BuildRoad):
+                    selected = action.chooseTarget(random.choice(action.getValidTargets()))
+                else:
+                    selected = action.chooseTarget(random.choice(action.getValidTargets()))
+                if selected and action.execute():
                     print(f"{player.name} {action.description()}")
                     break
             else:
@@ -117,7 +177,7 @@ class Game:
             for player in self.players:
                 self.runRandomTurn(player)
     
-    def throwDice(self):
+    def throwDice(self) -> int:
         diceResult: int = random.randint(1, 6) + random.randint(1, 6)
         
         for tile in self.board.tiles:
@@ -130,6 +190,7 @@ class Game:
                             player.resources.append(resource)
                             if node.building == BuildingType.CITY:
                                 player.resources.append(resource)
+        return diceResult
 
     def serialize(self) -> dict[str, object]:
         playerIndex = {id(p): k for k, p in enumerate(self.players)}
@@ -142,6 +203,7 @@ class Game:
                 {"id": k, **p.serialize()}
                 for k, p in enumerate(self.players)
             ],
+            "turn": self.serializeTurn(),
             "board": {
                 "boardSize": self.board.boardSize,
                 "tiles": [
