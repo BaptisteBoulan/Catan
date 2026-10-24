@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://catan-ugce.onrender.com/:path*"
+    }
+  ]
+}
