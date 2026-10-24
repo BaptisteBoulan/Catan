@@ -4,6 +4,43 @@ The engine, game objects, primitives and WGSL shader are copied from the vanilla
 `webgpu` project. React owns the canvas lifecycle; the engine still updates and
 renders the scene outside React.
 
+## Source organization
+
+The backend uses domain packages under `backend/src` (the former `types` package
+has been removed):
+
+- `player/`: `player.py` holds the shared player model and strategy;
+  `human.py` and `ai.py` define the concrete players, and `color.py` defines colors.
+- `board/`: `board.py` generates the board; `node.py`, `edge.py`, `tile.py`,
+  and `port.py` define its parts. Building and landscape enums live here too.
+- `action/`: the base and targeted actions, individual building actions,
+  setup/free placements, bank trading, and development-card purchases.
+- `dev_card/`: the base development card and one module per card behavior.
+- `game/`: game rules, turn orchestration, and serialization.
+- `resource.py`: the resource enum shared across domains.
+- `main.py`: FastAPI routes and in-memory sessions; the server entry point is unchanged.
+
+Each package explicitly exports its public models from `__init__.py`. Import
+models from their domain package, for example `from backend.src.player import AiPlayer`.
+
+The frontend follows the page flow:
+
+- `App.tsx` chooses between the lobby and game screen.
+- `components/lobby/Lobby.tsx` contains the create/join forms.
+- `components/game/GameScreen.tsx` composes the sidebar, board, actions, chat,
+  and result dialog. Each section has a named component; bank trades, development
+  card choices, chat messages, and trade-offer fields are separate components.
+- `hooks/useGameController.ts` coordinates navigation, presence, game actions,
+  placement previews, and the WebGPU scene.
+- `hooks/useLobby.ts` manages create/join requests and form state.
+- `hooks/useChat.ts` manages chat polling, messages, and trade offers.
+- `game/api.ts`, `game/location.ts`, and `game/constants.ts` provide shared
+  request handling, URL parsing, and resource/build labels.
+
+UI components use the typed controller contract in `game/view-types.ts`. Network
+state and timers stay in hooks; rendering and input controls stay in components.
+The engine and scene lifecycle remain outside this refactor.
+
 ## Run
 
 ```sh
@@ -21,10 +58,50 @@ The Vite development server proxies `/api` to `127.0.0.1:8000`.
 
 ## Game sessions
 
-Enter a display name, then create a game with 2-5 player slots or join using an
-existing four-digit game ID. The creator claims the first slot; each join claims
+Enter an optional display name, then create a game with 1-5 player slots or join using an
+existing four-digit game ID. Leaving the name blank assigns a random Game of Thrones
+character name that is not already taken by a human or AI in that game.
+The creator claims the first slot; each join claims
 the next slot and color. Names must be unique
-within a game, ignoring case and surrounding whitespace. Full games reject joins.
+within a game, ignoring case and surrounding whitespace. Full or started games reject joins.
+Player colors, in slot order, are light blue, soft red, green, yellow-orange and
+indigo. Board pieces, port flags, player markers and action entries share the same
+lighter, less saturated palette.
+Landscape materials are also subtly lightened and desaturated while retaining
+their original shading and distinct resource colors.
+New boards make up to 20 swaps between different landscape types that both have
+identical neighbors. Each swap reduces matching neighboring pairs; generation
+stops early if no improving swap remains. Tile counts, number tokens and the
+desert's thief are preserved.
+
+The host can start before every slot is claimed. Empty slots become AI players
+with unique, random Game of Thrones character names and an **(AI)** label.
+They choose legal starting settlements with the highest expected resource yield,
+in the same snake order as humans. A node's value is the sum of its adjacent
+resource tiles' two-dice probabilities: 2/12 contribute 1/36 each, 3/11 contribute
+2/36, 4/10 contribute 3/36, 5/9 contribute 4/36, and 6/8 contribute 5/36.
+Desert contributes zero. This estimates long-term production, ignoring temporary
+thief placement, and values all resource types equally.
+The AI keeps the highest-value available settlement target reachable within two
+edges of any of its settlements or cities. Opponent roads and buildings block
+routes. Each turn it validates the objective, builds the missing roads in order,
+then the settlement, and replans when the target becomes unavailable or is built.
+It uses bank/port trades to fund the next step while reserving that build's
+required resources; it does not make partial trades unless the step is affordable.
+If no legal goal or affordable step exists, it waits. The strategy does not
+upgrade cities or buy/play development cards; thief moves remain random.
+AIs stay visible without heartbeats, cannot
+be controlled through a player URL, and are not player-trade recipients.
+Play again preserves their names, colors and AI status.
+
+**Observation mode** is checked by default in the lobby. It runs setup automatically
+for everyone, then pauses before each player's actions. Each **Next turn** click
+executes exactly one complete turn using the same AI strategy for humans and AIs,
+including any required thief move. Any joined human can advance the simulation,
+even when an AI is the current player. The action panel shows the current player's
+settlement goal and expected yield; chat records plans, builds and trades.
+Uncheck the option before starting to keep manual human play and automatic AI
+turns. The backend start route defaults to normal mode for existing API callers.
 
 The game page URL is `/games/{gameId}/players/{playerId}`. Refreshing or reopening
 that URL resumes the same player without creating another one. The sidebar shows
@@ -80,11 +157,14 @@ proxy `/api` to the backend.
 
 Backend routes (under `/api` through Vite):
 
-- `POST /games` with `{ "name": "Alice", "playerCount": 4 }`
-- `POST /games/{gameId}/players` with `{ "name": "Bob" }`
+- `POST /games` with `{ "name": "Alice", "playerCount": 4 }` (name may be omitted or blank)
+- `POST /games/{gameId}/players` with `{ "name": "Bob" }` (name may be omitted or blank)
 - `GET /games/{gameId}?playerId={playerId}` for the board and session metadata
 - `POST /games/{gameId}/players/{playerId}/heartbeat` for live player presence
-- `POST /games/{gameId}/start?playerId=0` to begin setup once all slots are claimed
+- `POST /games/{gameId}/start?playerId=0&observationMode=true` to fill empty slots
+  with AIs and automate setup for observation (omit the flag for manual human play)
+- `POST /games/{gameId}/next-turn?playerId={playerId}` to run one complete AI-driven
+  turn in observation mode; rejects normal-mode games and finished games
 - `POST /games/{gameId}/play-again?playerId={playerId}` to reset a finished game
   to the same lobby (repeated requests in that lobby are idempotent)
 - `GET /games/{gameId}/build/{kind}/targets?playerId={playerId}` for valid placement slots
@@ -308,8 +388,12 @@ and neutral ambient light are used.
 
 ## Controls
 
-- Hold the left mouse button and drag on the canvas to look. The cursor stays
-  visible and is never locked; releasing the button stops mouse look.
+- Hold the left mouse button and drag on the canvas to orbit around the board
+  center (Blender-style). The cursor stays visible and is never locked.
+- Right-drag to pan in the view plane. Panning and keyboard movement also move
+  the orbit pivot, so subsequent rotation stays centered on the area being viewed.
+- Scroll over the canvas to zoom in and out; scrolling elsewhere keeps its normal
+  page behavior. Releasing either mouse button stops its drag action.
 - Click without dragging to select a highlighted placement target.
 - WASD (ZQSD on AZERTY) moves horizontally.
 - Space moves up; Shift moves down.

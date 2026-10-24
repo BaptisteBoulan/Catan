@@ -1,4 +1,4 @@
-export type PlayerColor = 'red' | 'blue' | 'green' | 'yellow' | 'white';
+export type PlayerColor = 'blue' | 'red' | 'green' | 'orange' | 'indigo';
 export type BuildingType = 'none' | 'settlement' | 'city';
 export type BuildKind = 'road' | 'settlement' | 'city';
 export type PlacementKind = BuildKind | 'thief';
@@ -12,7 +12,9 @@ export type PlayerDto = {
     id: number;
     name: string;
     color: PlayerColor;
+    isAi: boolean;
     points: number;
+    settlementObjective: { nodeId: number; expectedResourcesPerTurn: number } | null;
     hasLongestRoad: boolean;
     hasLargestArmy: boolean;
     knightsPlayed: number;
@@ -92,6 +94,7 @@ export type PortDto = EdgeDto & {
 
 export type TurnDto = {
     started: boolean;
+    observationMode: boolean;
     currentPlayer: number;
     turnNumber: number;
     diceRoll: number | null;

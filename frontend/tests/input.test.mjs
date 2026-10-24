@@ -56,7 +56,7 @@ test('ordinary clicks select at cursor coordinates without locking the cursor', 
   assert.equal(document.activeElement, canvas)
 })
 
-test('only held left-button drags look, and dragging does not select a target', (t) => {
+test('left drags rotate, right drags pan, and dragging does not select a target', (t) => {
   const { canvas, document, input, emit } = fixture(t)
   const picks = []
   input.onClick = (...point) => picks.push(point)
@@ -73,10 +73,53 @@ test('only held left-button drags look, and dragging does not select a target', 
   emit(canvas, 'mousedown', { button: 2 })
   emit(document, 'mousemove', { buttons: 2, clientX: 120 })
   assert.deepEqual(input.mouseDelta, [0, 0])
+  assert.deepEqual(input.panDelta, [60, 0])
+  emit(document, 'mouseup', { button: 2 })
+  input.endFrame()
   emit(canvas, 'mousedown')
   emit(document, 'mouseup')
   emit(canvas, 'click')
   assert.equal(picks.length, 1)
+})
+
+test('wheel zoom is canvas scoped, normalizes delta modes and resets each frame', (t) => {
+  const { canvas, document, window, input, emit } = fixture(t)
+  assert.equal(emit(document, 'wheel', { deltaY: 120, deltaMode: 0 }).defaultPrevented, false)
+  assert.equal(input.wheelDelta, 0)
+  assert.equal(emit(canvas, 'wheel', { deltaY: 40, deltaMode: 0 }).defaultPrevented, true)
+  emit(canvas, 'wheel', { deltaY: 2, deltaMode: 1 })
+  emit(canvas, 'wheel', { deltaY: -1, deltaMode: 2 })
+  assert.equal(input.wheelDelta, -28)
+  assert.equal(emit(canvas, 'contextmenu').defaultPrevented, true)
+  input.endFrame()
+  assert.equal(input.wheelDelta, 0)
+  emit(canvas, 'wheel', { deltaY: 20, deltaMode: 0 })
+  emit(window, 'blur')
+  assert.equal(input.wheelDelta, 0)
+  input.dispose()
+  assert.equal(emit(canvas, 'wheel', { deltaY: 20, deltaMode: 0 }).defaultPrevented, false)
+  assert.equal(emit(canvas, 'contextmenu').defaultPrevented, false)
+})
+
+test('right drags end on release, missed release and blur without selecting', (t) => {
+  const { canvas, document, input, emit } = fixture(t)
+  input.onClick = () => assert.fail('Panning must not select')
+  emit(canvas, 'mousedown', { button: 2 })
+  emit(document, 'mousemove', { buttons: 2, clientX: 100, clientY: 65 })
+  assert.deepEqual(input.panDelta, [40, 20])
+  emit(document, 'mouseup', { button: 2 })
+  emit(canvas, 'click', { button: 2 })
+  input.endFrame()
+  emit(document, 'mousemove', { buttons: 2, clientX: 120 })
+  assert.deepEqual(input.panDelta, [0, 0])
+  emit(canvas, 'mousedown', { button: 2 })
+  emit(document, 'mousemove', { buttons: 0, clientX: 120 })
+  emit(document, 'mousemove', { buttons: 2, clientX: 140 })
+  assert.deepEqual(input.panDelta, [0, 0])
+  emit(canvas, 'mousedown', { button: 2 })
+  emit(document, 'mousemove', { buttons: 2, clientX: 100 })
+  emit(canvas, 'blur')
+  assert.deepEqual(input.panDelta, [0, 0])
 })
 
 test('release outside the canvas, missed releases and blur stop camera look', (t) => {

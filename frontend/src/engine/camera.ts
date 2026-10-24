@@ -10,6 +10,7 @@ export type CameraBounds = {
 
 export type CameraOptions = {
     position?: Vec3;
+    target?: Vec3;
     yaw?: number;
     pitch?: number;
     fov?: number;
@@ -21,11 +22,12 @@ export type CameraOptions = {
 };
 
 /**
- * First-person fly camera (Minecraft creative style).
+ * Orbit camera with view-plane panning and horizontal fly movement.
  * yaw = 0 looks towards -Z; positive yaw turns left, positive pitch looks up.
  */
 export class Camera {
     position: Vec3;
+    readonly target: Vec3;
     yaw: number;
     pitch: number;
     fov: number;
@@ -44,8 +46,10 @@ export class Camera {
 
     constructor(options: CameraOptions = {}) {
         this.position = options.position ?? vec3.fromValues(3, 4, 3);
-        this.yaw = options.yaw ?? Math.PI / 4;
-        this.pitch = options.pitch ?? -Math.PI / 4;
+        this.target = vec3.clone(options.target ?? options.bounds?.center ?? vec3.fromValues(0, 0, 0));
+        const direction = vec3.subtract(this.target, this.position);
+        this.yaw = options.yaw ?? Math.atan2(-direction[0], -direction[2]);
+        this.pitch = options.pitch ?? Math.atan2(direction[1], Math.hypot(direction[0], direction[2]));
         this.fov = options.fov ?? Math.PI / 3;
         this.near = options.near ?? 0.01;
         this.far = options.far ?? 100;
@@ -75,6 +79,63 @@ export class Camera {
         this.pitch = Math.min(limit, Math.max(-limit, this.pitch - dy * this.sensitivity));
     }
 
+    /** Rotate around the navigation target without moving it. */
+    orbit(dx: number, dy: number): void {
+        const offset = vec3.subtract(this.position, this.target);
+        const distance = vec3.length(offset);
+        const limit = Math.PI / 2 - 0.01;
+        const yaw = Math.atan2(offset[0], offset[2]) - dx * this.sensitivity;
+        let pitch = Math.atan2(-offset[1], Math.hypot(offset[0], offset[2])) - dy * this.sensitivity;
+        const maxPitch = this.bounds && distance > 0
+            ? Math.asin(Math.max(-1, Math.min(1, (this.target[1] - this.bounds.minHeight) / distance)))
+            : limit;
+        pitch = Math.max(-limit, Math.min(limit, maxPitch, pitch));
+        vec3.set(
+            this.target[0] + Math.sin(yaw) * Math.cos(pitch) * distance,
+            this.target[1] - Math.sin(pitch) * distance,
+            this.target[2] + Math.cos(yaw) * Math.cos(pitch) * distance,
+            this.position,
+        );
+        this.clampPosition();
+        this.aimAtTarget();
+    }
+
+    private aimAtTarget(): void {
+        const direction = vec3.subtract(this.target, this.position);
+        this.yaw = Math.atan2(-direction[0], -direction[2]);
+        this.pitch = Math.atan2(direction[1], Math.hypot(direction[0], direction[2]));
+    }
+
+    /** Pan in the view plane, keeping world units per pixel consistent at the target. */
+    pan(dx: number, dy: number, viewportHeight: number): void {
+        const scale = 2 * vec3.distance(this.position, this.target) * Math.tan(this.fov / 2) / viewportHeight;
+        const right = vec3.fromValues(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+        const viewUp = vec3.cross(right, this.forward);
+        const displacement = vec3.addScaled(vec3.scale(right, -dx * scale), viewUp, dy * scale);
+        this.translate(displacement);
+    }
+
+    /** Dolly towards or away from the target without crossing it. */
+    zoom(delta: number): void {
+        const offset = vec3.subtract(this.position, this.target);
+        const distance = vec3.length(offset);
+        if (distance === 0) return;
+        const maxDistance = this.bounds
+            ? this.bounds.maxDistance + vec3.distance(this.target, this.bounds.center ?? vec3.fromValues(0, 0, 0))
+            : this.far;
+        const nextDistance = Math.min(maxDistance, Math.max(Math.max(0.1, this.near * 2), distance * Math.exp(delta * 0.001)));
+        vec3.addScaled(this.target, offset, nextDistance / distance, this.position);
+        this.clampPosition();
+        this.aimAtTarget();
+    }
+
+    private translate(displacement: Vec3): void {
+        const previous = vec3.clone(this.position);
+        vec3.add(this.position, displacement, this.position);
+        this.clampPosition();
+        vec3.add(this.target, vec3.subtract(this.position, previous), this.target);
+    }
+
     /**
      * Move relative to the view direction, ignoring pitch (horizontal plane like Minecraft).
      * Each axis is in [-1, 1]: forward (+ = ahead), right (+ = right), up (+ = world up). dt in ms.
@@ -92,8 +153,7 @@ export class Camera {
             dir[0] /= horizontalLength;
             dir[2] /= horizontalLength;
         }
-        vec3.addScaled(this.position, dir, this.speed * dt / 1000, this.position);
-        this.clampPosition();
+        this.translate(vec3.scale(dir, this.speed * dt / 1000));
     }
 
     /** Keeps the position above `bounds.minHeight` and within `bounds.maxDistance` of the center. */

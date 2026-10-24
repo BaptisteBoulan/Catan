@@ -1,19 +1,6 @@
 from enum import Enum, auto
 
-
-class Color(Enum):
-    RED = "red"
-    BLUE = "blue"
-    GREEN = "green"
-    YELLOW = "yellow"
-    WHITE = "white"
-
-class Resource(Enum):
-    WOOD = "wood"
-    BRICK = "brick"
-    SHEEP = "sheep"
-    WHEAT = "wheat"
-    ORE = "ore"
+from ..resource import Resource
 
 
 class Landscape(Enum):
@@ -33,9 +20,3 @@ class Landscape(Enum):
             Landscape.FIELDS: Resource.WHEAT,
             Landscape.MOUNTAINS: Resource.ORE,
         }.get(self)
-
-
-class BuildingType(Enum):
-    NONE = "none"
-    SETTLEMENT = "settlement"
-    CITY = "city"

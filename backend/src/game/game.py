@@ -1,16 +1,17 @@
 import random
 from datetime import datetime, timezone
 
-from .enum import BuildingType, Resource
-from .devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
-
-from .action import (
+from ..board.building_type import BuildingType
+from ..resource import Resource
+from ..dev_card import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
+from ..action import (
     BankTrade, BuildCity, BuildRoad, BuildSettlement, DrawDevCard, FreeRoad, SetupRoad, SetupSettlement,
     Target, TargetedAction,
 )
-from .board import Board, Edge, Node
-from .enum import Color
-from .player import Player
+from ..board import Board, Edge, Node
+from ..player.color import Color
+from ..player import AiPlayer, HumanPlayer, Player
+
 
 MIN_PLAYERS = 1
 MAX_PLAYERS = 5
@@ -37,7 +38,7 @@ class Game:
             raise ValueError(f"playerCount must be between {MIN_PLAYERS} and {MAX_PLAYERS}")
         colors = list(Color)
         self.players: list[Player] = [
-            Player(f"Player {k + 1}", colors[k]) for k in range(playerCount)
+            HumanPlayer(f"Player {k + 1}", colors[k]) for k in range(playerCount)
         ]
         self.board = Board(boardSize)
         self.setDevCardDeck()
@@ -56,6 +57,8 @@ class Game:
         self.longestRoadLength = 0
         self.largestArmyHolder: Player | None = None
         self.chat: list[dict[str, object]] = []
+        self.advancingAiPlayers = False
+        self.observationMode = False
 
     def logAction(self, player: Player, description: str):
         self.chat.append({
@@ -72,13 +75,47 @@ class Game:
             "createdAt": datetime.now(timezone.utc),
         })
 
-    def start(self):
+    def start(self, observationMode: bool = False):
         if self.started:
             raise GameRuleError("The game has already started.")
+        if all(player.isAi for player in self.players):
+            raise GameRuleError("At least one human player is required.")
         self.started = True
         self.currentPlayer = 0
         self.setupStep = 0
         self.diceRoll = None
+        self.observationMode = observationMode
+        if self.observationMode:
+            while self.setupStep is not None:
+                self.players[self.currentPlayer].playTurn(self)
+        self.advanceAiPlayers()
+
+    def fillAiPlayers(self, humanPlayerIds: set[int]) -> None:
+        if self.started:
+            raise GameRuleError("The game has already started.")
+        takenNames = {player.name.casefold() for player in self.players}
+        names = [name for name in AiPlayer.NAMES if name.casefold() not in takenNames]
+        random.shuffle(names)
+        for index, player in enumerate(self.players):
+            if index not in humanPlayerIds and not player.isAi:
+                self.players[index] = AiPlayer(names.pop(), player.color)
+
+    def advanceAiPlayers(self) -> None:
+        # AI actions use the same transitions as human actions, without nesting dispatch.
+        if self.advancingAiPlayers or self.observationMode:
+            return
+        self.advancingAiPlayers = True
+        try:
+            while self.started and self.winner is None and self.players[self.currentPlayer].isAi:
+                self.players[self.currentPlayer].playTurn(self)
+        finally:
+            self.advancingAiPlayers = False
+
+    def nextObservedTurn(self) -> None:
+        if not self.observationMode:
+            raise GameRuleError("Observation mode is not enabled.")
+        self.requireTurn(self.currentPlayer)
+        self.players[self.currentPlayer].playTurn(self)
 
     def requireTurn(self, playerIndex: int):
         if self.winner is not None:
@@ -343,6 +380,7 @@ class Game:
                         self.setupStep if self.setupStep < playerCount
                         else 2 * playerCount - 1 - self.setupStep
                     )
+        self.advanceAiPlayers()
 
     def executeOn(self, action: TargetedAction[Target], targetId: int) -> bool:
         target = next((target for target in action.getValidTargets()
@@ -358,10 +396,12 @@ class Game:
         self.devCardPlayed = False
         self.diceRoll = None
         self.rollDice(self.currentPlayer)
+        self.advanceAiPlayers()
 
     def serializeTurn(self) -> dict[str, object]:
         return {
             "started": self.started,
+            "observationMode": self.observationMode,
             "currentPlayer": self.currentPlayer,
             "turnNumber": self.turnNumber,
             "diceRoll": self.diceRoll,
@@ -438,12 +478,12 @@ class Game:
             kind = self.setupKind
             targets = self.buildTargets(self.currentPlayer, kind)
             self.buildAt(self.currentPlayer, kind, random.choice(targets))
-        for _ in range(roundCount):
-            for _ in self.players:
-                self.runRandomTurn(self.players[self.currentPlayer])
-                if self.winner is not None:
-                    return
-                self.endTurn(self.currentPlayer)
+        finalTurn = self.turnNumber + roundCount * len(self.players)
+        while self.turnNumber < finalTurn:
+            self.runRandomTurn(self.players[self.currentPlayer])
+            if self.winner is not None:
+                return
+            self.endTurn(self.currentPlayer)
     
     def throwDice(self) -> int:
         self.diceValues = (random.randint(1, 6), random.randint(1, 6))

@@ -1,65 +1,13 @@
 import math
 import random
 
-from .enum import BuildingType, Landscape, Resource
-from .player import Player
+from ..resource import Resource
+from .edge import Edge
+from .landscape import Landscape
+from .node import Node
+from .port import Port
+from .tile import Tile
 
-SQRT3: float = 3 ** 0.5
-
-class Node:
-    """Represents a vertex where settlements or cities can be built."""
-    def __init__(self, id: int, x: float, y: float):
-        self.id = id
-        self.x = x
-        self.y = y
-        self.building: BuildingType = BuildingType.NONE
-        self.owner: Player | None = None
-        self.neighbors: set["Node"] = set()
-        self.edges: set["Edge"] = set()
-
-    def __repr__(self):
-        b_str = f"{self.building.name}" if self.building != BuildingType.NONE else "Empty"
-        return f"Node({b_str}) at ({self.x:.2f}, {self.y:.2f})"
-
-class Edge:
-    """Represents an edge between two nodes where roads can be built."""
-    def __init__(self, node1: Node, node2: Node):
-        self.node1 = node1
-        self.node2 = node2
-        self.owner: Player | None = None
-
-    def __repr__(self):
-        status = f"Road ({self.owner.name})" if self.owner else "Empty"
-        return f"Edge [{status}] between ({self.node1.x:.2f}, {self.node1.y:.2f}) and ({self.node2.x:.2f}, {self.node2.y:.2f})"
-
-class Port:
-    def __init__(self, edge: Edge, resource: Resource | None):
-        self.edge = edge
-        self.resource = resource
-        self.owner: Player | None = None
-
-
-class Tile:
-    def __init__(self, i: int, j: int, landscape: Landscape, diceNumber: int | None = None):
-        self.i = i
-        self.j = j
-        self.landscape = landscape
-        self.diceNumber = diceNumber
-        self.isOccupiedByThief: bool = (landscape == Landscape.DESERT)
-        self.nodes: list[Node] = []
-        self.edges: list[Edge] = []
-    
-    def getActualCoordinates(self) -> tuple[float, float]:
-        # Flat-topped axial layout with unit radius (matches the frontend renderer).
-        x: float = self.i * 1.5
-        y: float = (self.j + self.i / 2) * SQRT3
-        return (x, y)
-    
-    def __repr__(self):
-        x, y = self.getActualCoordinates()
-        thiefStr = " [THIEF]" if self.isOccupiedByThief else ""
-        numStr = f" (Dice: {self.diceNumber})" if self.diceNumber else ""
-        return f"Tile({self.landscape.name}{numStr}){thiefStr} at ({x:.2f}, {y:.2f})"
 
 class Board:
     def __init__(self, boardSize: int = 3):
@@ -177,3 +125,38 @@ class Board:
                 tile.edges.append(edge)
 
             self.tiles.append(tile)
+
+        self.improveTileDistribution()
+
+    def improveTileDistribution(self) -> None:
+        """Make up to 20 improving swaps between different clustered tile types."""
+        neighbors = {
+            tile: [other for other in self.tiles
+                   if other is not tile and any(edge in other.edges for edge in tile.edges)]
+            for tile in self.tiles
+        }
+        for _ in range(20):
+            conflicts = {
+                tile: sum(other.landscape == tile.landscape for other in adjacent)
+                for tile, adjacent in neighbors.items()
+            }
+            clustered = [tile for tile in self.tiles if conflicts[tile]]
+            swaps: list[tuple[Tile, Tile]] = []
+            for index, first in enumerate(clustered):
+                for second in clustered[index + 1:]:
+                    if first.landscape == second.landscape:
+                        continue
+                    after = sum(other.landscape == second.landscape
+                                for other in neighbors[first] if other is not second)
+                    after += sum(other.landscape == first.landscape
+                                 for other in neighbors[second] if other is not first)
+                    if after < conflicts[first] + conflicts[second]:
+                        swaps.append((first, second))
+            if not swaps:
+                break
+            first, second = random.choice(swaps)
+            first.landscape, second.landscape = second.landscape, first.landscape
+            first.diceNumber, second.diceNumber = second.diceNumber, first.diceNumber
+            first.isOccupiedByThief, second.isOccupiedByThief = (
+                second.isOccupiedByThief, first.isOccupiedByThief
+            )

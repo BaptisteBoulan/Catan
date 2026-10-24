@@ -8,8 +8,9 @@ from typing import Callable, Literal, TypeVar
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .types.game import MAX_PLAYERS, MIN_PLAYERS, Game, GameRuleError
-from .types.enum import Resource
+from .game import MAX_PLAYERS, MIN_PLAYERS, Game, GameRuleError
+from .resource import Resource
+from .player import AiPlayer
 
 app = FastAPI()
 
@@ -36,10 +37,13 @@ class GameSession:
         return [
             {
                 "id": index,
-                **self.game.players[index].serialize(self.game),
-                "connected": now - lastSeen < PRESENCE_TIMEOUT,
+                **player.serialize(self.game),
+                "connected": player.isAi or (
+                    index in self.lastSeen and now - self.lastSeen[index] < PRESENCE_TIMEOUT
+                ),
             }
-            for index, lastSeen in self.lastSeen.items()
+            for index, player in enumerate(self.game.players)
+            if index in self.lastSeen or player.isAi
         ]
 
 
@@ -48,7 +52,7 @@ gamesLock = RLock()
 
 
 class JoinGameRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    name: str = Field(default="", max_length=40)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -120,12 +124,20 @@ def requirePlayer(session: GameSession, playerId: int) -> None:
 
 
 def claimPlayer(session: GameSession, name: str) -> int:
-    if any(session.game.players[index].name.casefold() == name.casefold()
-           for index in session.lastSeen):
+    if session.game.started:
+        raise HTTPException(status_code=409, detail="This game has already started.")
+    takenNames = {player.name.casefold()
+                  for index, player in enumerate(session.game.players)
+                  if index in session.lastSeen or player.isAi}
+    if name.casefold() in takenNames:
         raise HTTPException(status_code=409, detail="This name is already taken in this game.")
-    if len(session.lastSeen) >= len(session.game.players):
+    playerId = next((index for index, player in enumerate(session.game.players)
+                     if index not in session.lastSeen and not player.isAi), None)
+    if playerId is None:
         raise HTTPException(status_code=409, detail="This game is full.")
-    playerId = len(session.lastSeen)
+    if not name:
+        name = secrets.choice([candidate for candidate in AiPlayer.NAMES
+                               if candidate.casefold() not in takenNames])
     session.game.players[playerId].name = name
     session.lastSeen[playerId] = monotonic()
     return playerId
@@ -196,15 +208,14 @@ def applyRule(action: Callable[[], T]) -> T:
 
 
 @app.post("/games/{gameId}/start")
-def startGame(gameId: str, playerId: int):
+def startGame(gameId: str, playerId: int, observationMode: bool = False):
     with gamesLock:
         session = getSession(gameId)
         requirePlayer(session, playerId)
         if playerId != HOST_PLAYER_ID:
             raise HTTPException(status_code=403, detail="Only the host can start the game.")
-        if len(session.lastSeen) < len(session.game.players):
-            raise HTTPException(status_code=409, detail="Waiting for all players to join.")
-        applyRule(session.game.start)
+        applyRule(lambda: session.game.fillAiPlayers(set(session.lastSeen)))
+        applyRule(lambda: session.game.start(observationMode))
         session.replayLobby = False
         return sessionState(gameId, session)
 
@@ -222,6 +233,9 @@ def playAgain(gameId: str, playerId: int) -> dict[str, object]:
                     boardSize=session.game.board.boardSize)
         for index in session.lastSeen:
             game.players[index].name = session.game.players[index].name
+        for index, player in enumerate(session.game.players):
+            if player.isAi:
+                game.players[index] = AiPlayer(player.name, player.color)
         session.game = game
         session.chat.clear()
         session.replayLobby = True
@@ -263,6 +277,27 @@ def getChat(gameId: str, playerId: int) -> dict[str, object]:
         return {"messages": session.chat}
 
 
+def completeTradeOffer(game: Game, offer: dict[str, object]) -> None:
+    senderId = int(offer["senderId"])
+    recipientId = int(offer["recipientId"])
+    give = Resource(str(offer["give"]))
+    receive = Resource(str(offer["receive"]))
+    giveCount = int(offer["giveCount"])
+    receiveCount = int(offer["receiveCount"])
+    sender = game.players[senderId]
+    recipient = game.players[recipientId]
+    if sender.resources.count(give) < giveCount or recipient.resources.count(receive) < receiveCount:
+        raise HTTPException(status_code=409, detail="A player no longer has the offered resources.")
+    for _ in range(giveCount):
+        sender.resources.remove(give)
+    for _ in range(receiveCount):
+        recipient.resources.remove(receive)
+    sender.resources.extend([receive] * receiveCount)
+    recipient.resources.extend([give] * giveCount)
+    game.logAction(sender, f"exchanged {giveCount} {give.value} with {recipient.name}"
+                   f" for {receiveCount} {receive.value}")
+
+
 @app.post("/games/{gameId}/chat", status_code=201)
 def sendChat(gameId: str, playerId: int, request: ChatRequest) -> dict[str, object]:
     with gamesLock:
@@ -281,8 +316,12 @@ def sendChat(gameId: str, playerId: int, request: ChatRequest) -> dict[str, obje
             "status": "pending" if request.recipientId is not None else None,
             "createdAt": datetime.now(timezone.utc),
         }
-        if request.recipientId is not None and request.recipientId not in session.lastSeen:
-            raise HTTPException(status_code=404, detail="Trade recipient not found.")
+        if request.recipientId is not None:
+            recipientId = request.recipientId
+            if (not 0 <= recipientId < len(session.game.players)
+                    or (recipientId not in session.lastSeen
+                        and not session.game.players[recipientId].isAi)):
+                raise HTTPException(status_code=404, detail="Trade recipient not found.")
         if request.recipientId == playerId:
             raise HTTPException(status_code=422, detail="You cannot send a trade offer to yourself.")
         if request.recipientId is not None:
@@ -294,6 +333,16 @@ def sendChat(gameId: str, playerId: int, request: ChatRequest) -> dict[str, obje
             ):
                 raise HTTPException(status_code=409, detail="You do not have enough resources for this offer.")
         session.chat.append(message)
+        if request.recipientId is not None and session.game.players[request.recipientId].isAi:
+            aiPlayer = session.game.players[request.recipientId]
+            assert isinstance(aiPlayer, AiPlayer)
+            accepted = aiPlayer.acceptsTradeOffer(
+                session.game, request.give, request.giveCount,
+                request.receive, request.receiveCount,
+            )
+            if accepted:
+                completeTradeOffer(session.game, message)
+            message["status"] = "accepted" if accepted else "declined"
         return {"messages": session.chat}
 
 
@@ -315,22 +364,7 @@ def decideTradeOffer(
             applyRule(lambda: game.requireNormalTurn(senderId))
             if game.diceRoll is None:
                 raise HTTPException(status_code=409, detail="The dice must be rolled before trading.")
-            give = Resource(str(offer["give"]))
-            receive = Resource(str(offer["receive"]))
-            sender = game.players[senderId]
-            recipient = game.players[playerId]
-            giveCount = int(offer["giveCount"])
-            receiveCount = int(offer["receiveCount"])
-            if sender.resources.count(give) < giveCount or recipient.resources.count(receive) < receiveCount:
-                raise HTTPException(status_code=409, detail="A player no longer has the offered resources.")
-            for _ in range(giveCount):
-                sender.resources.remove(give)
-            for _ in range(receiveCount):
-                recipient.resources.remove(receive)
-            sender.resources.extend([receive] * receiveCount)
-            recipient.resources.extend([give] * giveCount)
-            game.logAction(sender, f"exchanged {giveCount} {give.value} with {recipient.name}"
-                           f" for {receiveCount} {receive.value}")
+            completeTradeOffer(game, offer)
         offer["status"] = "accepted" if decision == "accept" else "declined"
         return {"messages": session.chat, "state": sessionState(gameId, session)}
 
@@ -372,6 +406,18 @@ def endTurn(gameId: str, playerId: int):
                 message["status"] = "expired"
         return sessionState(gameId, session)
 
+@app.post("/games/{gameId}/next-turn")
+def nextObservedTurn(gameId: str, playerId: int):
+    with gamesLock:
+        session = getSession(gameId)
+        requirePlayer(session, playerId)
+        actingPlayer = session.game.currentPlayer
+        applyRule(session.game.nextObservedTurn)
+        for message in session.chat:
+            if message["senderId"] == actingPlayer and message["status"] == "pending":
+                message["status"] = "expired"
+        return sessionState(gameId, session)
+
 
 @app.get("/games/{gameId}/thief/targets")
 def thiefTargets(gameId: str, playerId: int) -> dict[str, object]:
@@ -393,11 +439,14 @@ def moveThief(gameId: str, playerId: int, request: BuildRequest):
 def replaceBoard(session: GameSession, request: NewBoardRequest) -> None:
     if session.game.started:
         raise HTTPException(status_code=409, detail="Cannot replace the board after the game started.")
-    if request.playerCount < len(session.lastSeen):
+    if any(index >= request.playerCount for index in session.lastSeen):
         raise HTTPException(status_code=409, detail="Cannot remove joined players.")
     game = Game(playerCount=request.playerCount)
     for index in session.lastSeen:
         game.players[index].name = session.game.players[index].name
+    for index, player in enumerate(session.game.players[:request.playerCount]):
+        if player.isAi:
+            game.players[index] = AiPlayer(player.name, player.color)
     game.chat = session.chat
     session.game = game
 

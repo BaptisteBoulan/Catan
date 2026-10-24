@@ -13,6 +13,7 @@ import { Port } from "./objects/port";
 import { Thief } from "./objects/thief";
 import { loadNumberTokenGeometry } from "./objects/number-token";
 import type { PlacementKind, GameDto, PlayerColor } from "./api-types";
+import { PLAYER_COLORS } from "./player-colors";
 
 export type Placement = {
     kind: PlacementKind;
@@ -36,13 +37,9 @@ export const CAMERA_MAX_DISTANCE = 20;
 export const ENVIRONMENT_URL =
     `${import.meta.env.BASE_URL}hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr`;
 
-const playerColors: Record<PlayerColor, Vec3> = {
-    red: vec3.fromValues(0.9, 0.15, 0.15),
-    blue: vec3.fromValues(0.15, 0.3, 0.9),
-    green: vec3.fromValues(0.1, 0.7, 0.2),
-    yellow: vec3.fromValues(0.95, 0.85, 0.1),
-    white: vec3.fromValues(0.95, 0.95, 0.95),
-};
+function playerColor(color: PlayerColor): Vec3 {
+    return vec3.fromValues(...PLAYER_COLORS[color]);
+}
 
 function addHexTile(parent: SceneObject, i: number, j: number, landscape: number) {
     const x = i * 1.5;
@@ -147,7 +144,7 @@ async function createTerrain({ board }: GameDto, signal?: AbortSignal): Promise<
     const terrain = new SceneObject({ name: "Terrain" });
 
     const waterRadius = board.nodes.reduce(
-        (radius, node) => Math.max(radius, Math.hypot(node.x, node.y) + 0.8), 1,
+        (radius, node) => Math.max(radius, Math.hypot(node.x, node.y) + 20.8), 1,
     );
     terrain.add(new SceneObject({
         name: "Water",
@@ -209,7 +206,7 @@ function describeObjects(
         const z = (start.y + end.y) / 2;
         // +1 when the (-dz, dx) normal points away from the board center.
         const direction = x * -dz + z * dx > 0 ? 1 : -1;
-        const owner = player ? playerColors[player.color] : undefined;
+        const owner = player ? playerColor(player.color) : undefined;
         updates.set(`port:${index}`, {
             signature: JSON.stringify([start.x, start.y, end.x, end.y, port.resource, player?.color]),
             create: () => new Port(port.resource, {
@@ -238,7 +235,7 @@ function describeObjects(
             create: () => new Road(
                 vec3.fromValues(start.x, y, start.y),
                 vec3.fromValues(end.x, y, end.y),
-                playerColors[player.color],
+                playerColor(player.color),
             ),
         });
     });
@@ -247,7 +244,7 @@ function describeObjects(
     board.nodes.forEach((node) => {
         if (node.building === 'none' || node.owner === null) return;
         const player = players[node.owner];
-        const color = player ? playerColors[player.color] : vec3.fromValues(0.5, 0.5, 0.5);
+        const color = player ? playerColor(player.color) : vec3.fromValues(0.5, 0.5, 0.5);
         updates.set(`building:${node.id}`, {
             signature: JSON.stringify([node.x, node.y, node.building, [...color]]),
             create: () => {
@@ -262,7 +259,7 @@ function describeObjects(
     if (!placement) return updates;
     const player = players[placement.playerId];
     if (!player) throw new Error(`Unknown player ${placement.playerId}`);
-    const color = vec3.lerp(playerColors[player.color], vec3.fromValues(1, 1, 1), PREVIEW_LIGHTEN);
+    const color = vec3.lerp(playerColor(player.color), vec3.fromValues(1, 1, 1), PREVIEW_LIGHTEN);
 
     for (const target of placement.targets) {
         if (placement.kind === 'thief') {

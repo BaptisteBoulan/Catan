@@ -4,6 +4,10 @@ import { createServer } from 'vite'
 
 let server
 let createDemoScene
+let PLAYER_COLORS
+let playerColorCss
+let loadModel
+let LANDSCAPE_MODELS
 const originalFetch = globalThis.fetch
 const originalBufferUsage = globalThis.GPUBufferUsage
 
@@ -13,6 +17,8 @@ before(async () => {
     appType: 'custom',
   })
   ;({ createDemoScene } = await server.ssrLoadModule('/src/game/demo-scene.ts'))
+  ;({ PLAYER_COLORS, playerColorCss } = await server.ssrLoadModule('/src/game/player-colors.ts'))
+  ;({ loadModel, LANDSCAPE_MODELS } = await server.ssrLoadModule('/src/game/models.ts'))
   globalThis.GPUBufferUsage = { VERTEX: 1, INDEX: 2, COPY_DST: 4 }
 })
 
@@ -24,7 +30,7 @@ after(async () => {
 
 function gameState() {
   return {
-    players: [{ id: 0, name: 'Alice', color: 'red', points: 1, resources: [], devCards: [] }],
+    players: [{ id: 0, name: 'Alice', color: 'red', isAi: false, points: 1, resources: [], devCards: [] }],
     turn: {
       started: true, currentPlayer: 0, turnNumber: 1, diceRoll: null,
       setup: null, thiefMovePending: false,
@@ -68,6 +74,33 @@ function colorsOf(geometry) {
 
 const asKey = (rgb) => rgb.map(Math.fround).join(',')
 
+test('all five softened player colors match UI, buildings, roads and port flags', async () => {
+  assert.deepEqual(Object.keys(PLAYER_COLORS), ['blue', 'red', 'green', 'orange', 'indigo'])
+  const game = gameState()
+  game.board.nodes[1].building = 'city'
+  game.board.nodes[1].owner = 0
+  game.board.edges[0].owner = 0
+  game.board.ports = [{ node1: 0, node2: 1, resource: null, owner: 0 }]
+  const scene = createDemoScene()
+  try {
+    for (const [color, rgb] of Object.entries(PLAYER_COLORS)) {
+      assert.ok(Math.min(...rgb) >= 0.4)
+      assert.ok(Math.max(...rgb) - Math.min(...rgb) <= 0.55)
+      assert.equal(playerColorCss(color),
+        `rgb(${rgb.map((channel) => Math.round(channel * 255)).join(', ')})`)
+      game.players[0].color = color
+      await scene.sync(game)
+      for (const name of ['Settlement', 'City', 'Road', 'Port general']) {
+        const piece = scene.root.children.find((object) => object.name === name)
+        assert.ok(piece, `${color} ${name}`)
+        assert.ok(colorsOf(piece.mesh.geometry).has(asKey(rgb)), `${color} ${name} tint`)
+      }
+    }
+  } finally {
+    scene.destroy()
+  }
+})
+
 test('ports use per-resource models facing the sea and recolor without replacing terrain', async () => {
   const scene = createDemoScene()
   const game = gameState()
@@ -86,7 +119,7 @@ test('ports use per-resource models facing the sea and recolor without replacing
   assert.ok(Math.abs(Math.sin(port.rotation[1]) - 1) < 1e-6)
   const unowned = colorsOf(port.mesh.geometry)
   assert.ok(unowned.has(asKey([0.92, 0.9, 0.84])))
-  assert.ok(!unowned.has(asKey([0.9, 0.15, 0.15])))
+  assert.ok(!unowned.has(asKey([0.86, 0.49, 0.49])))
   const buffers = uploadGeometry(scene)
   await scene.sync(structuredClone(game))
   assert.ok(scene.root.children.includes(port))
@@ -99,7 +132,7 @@ test('ports use per-resource models facing the sea and recolor without replacing
   assert.deepEqual([...owned.position], [...port.position])
   assert.equal(buffers.filter((buffer) => buffer.destroyed).length, 4)
   const ownedColors = colorsOf(owned.mesh.geometry)
-  assert.ok(ownedColors.has(asKey([0.9, 0.15, 0.15])))
+  assert.ok(ownedColors.has(asKey([0.86, 0.49, 0.49])))
   assert.ok(!ownedColors.has(asKey([0.92, 0.9, 0.84])))
   game.board.ports = []
   await scene.sync(game)
@@ -134,10 +167,21 @@ test('every landscape and port type has its own model', async () => {
   assert.equal(tiles.length, 6)
   const tileSignatures = new Set(tiles.map((tile) => [...tile.mesh.geometry.colors].join()))
   assert.equal(tileSignatures.size, 6)
-  for (const tile of tiles) {
+  for (const [index, tile] of tiles.entries()) {
     const ys = tile.mesh.geometry.positions.filter((_, index) => index % 3 === 1)
     assert.equal(Math.min(...ys), 0)
     assert.equal(tile.position[1], Math.fround(-0.075))
+    const original = loadModel(LANDSCAPE_MODELS[index + 1])
+    const muted = tile.mesh.geometry.colors
+    for (let offset = 0; offset < muted.length; offset += 3) {
+      const before = [...original.colors.slice(offset, offset + 3)]
+      const after = [...muted.slice(offset, offset + 3)]
+      const average = (rgb) => rgb.reduce((sum, value) => sum + value, 0) / 3
+      assert.ok(average(after) >= average(before) - 1e-6)
+      assert.ok(Math.abs((Math.max(...after) - Math.min(...after))
+        - (Math.max(...before) - Math.min(...before)) * 0.82) < 1e-6)
+    }
+    original.destroy()
   }
   const ports = scene.root.children.filter((object) => object.name.startsWith('Port '))
   assert.deepEqual(ports.map((port) => port.name).sort(),
