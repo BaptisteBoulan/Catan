@@ -8,7 +8,8 @@ import { createCylinder } from "../engine/mesh/primitives/cylinder";
 import { HexTile } from "./objects/hex-tile";
 import { Settlement } from "./objects/settlement";
 import { City } from "./objects/city";
-import { Road, ROAD_HEIGHT } from "./objects/road";
+import { Road } from "./objects/road";
+import { Port } from "./objects/port";
 import { Thief } from "./objects/thief";
 import { loadNumberTokenGeometry } from "./objects/number-token";
 import type { PlacementKind, GameDto, PlayerColor } from "./api-types";
@@ -26,8 +27,14 @@ const BUILDING_PICK_RADIUS = 0.2;
 
 const sqrt3 = Math.sqrt(3);
 const TILE_HEIGHT = 0.15;
-const SETTLEMENT_HEIGHT = 0.1;
-const CITY_HEIGHT = 0.3;
+/** Models rest on their origin; pieces stand on the tiles' top surface. */
+const BOARD_TOP = TILE_HEIGHT / 2;
+const PORT_OFFSET = 0.28;
+
+export const CAMERA_MIN_HEIGHT = 0.5;
+export const CAMERA_MAX_DISTANCE = 20;
+export const ENVIRONMENT_URL =
+    `${import.meta.env.BASE_URL}hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr`;
 
 const playerColors: Record<PlayerColor, Vec3> = {
     red: vec3.fromValues(0.9, 0.15, 0.15),
@@ -37,14 +44,12 @@ const playerColors: Record<PlayerColor, Vec3> = {
     white: vec3.fromValues(0.95, 0.95, 0.95),
 };
 
-function addHexTile(parent: SceneObject, i: number, j: number, color: Vec3) {
+function addHexTile(parent: SceneObject, i: number, j: number, landscape: number) {
     const x = i * 1.5;
     const z = (j + i/2) * sqrt3;
     return parent.add(new HexTile({
-        position: vec3.fromValues(x, 0, z),
-        radius: 0.99,
-        height: TILE_HEIGHT,
-        color: color,
+        position: vec3.fromValues(x, -TILE_HEIGHT / 2, z),
+        landscape,
     }));
 }
 
@@ -69,7 +74,10 @@ export class GameScene extends Scene {
     private revision = 0;
 
     constructor() {
-        super(new Camera({}));
+        super(new Camera({
+            bounds: { minHeight: CAMERA_MIN_HEIGHT, maxDistance: CAMERA_MAX_DISTANCE },
+        }));
+        this.environmentUrl = ENVIRONMENT_URL;
         this.add(new FlyCameraController());
     }
 
@@ -138,15 +146,6 @@ async function createTerrain({ board }: GameDto, signal?: AbortSignal): Promise<
     signal?.throwIfAborted();
     const terrain = new SceneObject({ name: "Terrain" });
 
-    const tileColors: Record<number, Vec3> = {
-        1: vec3.fromValues(0.1, 0.5, 0.1),
-        2: vec3.fromValues(0.8, 0.4, 0.2),
-        3: vec3.fromValues(0.5, 0.8, 0.3),
-        4: vec3.fromValues(0.9, 0.8, 0.4),
-        5: vec3.fromValues(0.5, 0.5, 0.5),
-        6: vec3.fromValues(0.85, 0.8, 0.6),
-    };
-
     const waterRadius = board.nodes.reduce(
         (radius, node) => Math.max(radius, Math.hypot(node.x, node.y) + 0.8), 1,
     );
@@ -156,8 +155,7 @@ async function createTerrain({ board }: GameDto, signal?: AbortSignal): Promise<
         position: vec3.fromValues(0, -TILE_HEIGHT / 2 - 0.02, 0),
     }));
     board.tiles.forEach((tile) => {
-        const color = tileColors[tile.landscape] ?? vec3.fromValues(0.5, 0.5, 0.5);
-        const hexTile = addHexTile(terrain, tile.i, tile.j, color);
+        const hexTile = addHexTile(terrain, tile.i, tile.j, tile.landscape);
         if (tile.landscape !== 6) {
             const geometry = tile.diceNumber == null ? undefined : tokenGeometries.get(tile.diceNumber);
             if (!geometry) {
@@ -166,7 +164,7 @@ async function createTerrain({ board }: GameDto, signal?: AbortSignal): Promise<
             hexTile.add(new SceneObject({
                 name: `Dice token ${tile.diceNumber}`,
                 mesh: new Mesh(geometry),
-                position: vec3.fromValues(0, TILE_HEIGHT / 2, 0),
+                position: vec3.fromValues(0, TILE_HEIGHT, 0),
             }));
         }
     });
@@ -192,10 +190,40 @@ function describeObjects(
         const z = (tile.j + tile.i / 2) * sqrt3;
         updates.set(`thief:${index}`, {
             signature: JSON.stringify([x, z]),
-            create: () => new Thief({ position: vec3.fromValues(x, TILE_HEIGHT / 2, z) }),
+            create: () => new Thief({ position: vec3.fromValues(x, BOARD_TOP, z) }),
         });
     });
     const nodesById = new Map(board.nodes.map((node) => [node.id, node]));
+    board.ports.forEach((port, index) => {
+        const start = nodesById.get(port.node1);
+        const end = nodesById.get(port.node2);
+        const player = port.owner === null ? null : players[port.owner];
+        if (!start || !end || player === undefined) {
+            throw new Error(`Invalid port from node ${port.node1} to ${port.node2}`);
+        }
+        const dx = end.x - start.x;
+        const dz = end.y - start.y;
+        const length = Math.hypot(dx, dz);
+        if (!length) throw new Error("Port nodes must be distinct");
+        const x = (start.x + end.x) / 2;
+        const z = (start.y + end.y) / 2;
+        // +1 when the (-dz, dx) normal points away from the board center.
+        const direction = x * -dz + z * dx > 0 ? 1 : -1;
+        const owner = player ? playerColors[player.color] : undefined;
+        updates.set(`port:${index}`, {
+            signature: JSON.stringify([start.x, start.y, end.x, end.y, port.resource, player?.color]),
+            create: () => new Port(port.resource, {
+                owner,
+                position: vec3.fromValues(
+                    x - direction * dz / length * PORT_OFFSET,
+                    -TILE_HEIGHT / 2,
+                    z + direction * dx / length * PORT_OFFSET,
+                ),
+                // Turn the model's +Z towards the open sea.
+                rotation: vec3.fromValues(0, -Math.atan2(dz, dx) + (direction < 0 ? Math.PI : 0), 0),
+            }),
+        });
+    });
     board.edges.forEach((edge, index) => {
         if (edge.owner === null) return;
         const start = nodesById.get(edge.node1);
@@ -204,7 +232,7 @@ function describeObjects(
         if (!start || !end || !player) {
             throw new Error(`Invalid road from node ${edge.node1} to ${edge.node2}`);
         }
-        const y = TILE_HEIGHT / 2 + ROAD_HEIGHT / 2;
+        const y = BOARD_TOP;
         updates.set(`road:${index}`, {
             signature: JSON.stringify([start.x, start.y, end.x, end.y, player.color]),
             create: () => new Road(
@@ -224,11 +252,9 @@ function describeObjects(
             signature: JSON.stringify([node.x, node.y, node.building, [...color]]),
             create: () => {
                 if (node.building === 'settlement') {
-                    const y = TILE_HEIGHT / 2 + SETTLEMENT_HEIGHT / 2;
-                    return new Settlement({ position: vec3.fromValues(node.x, y, node.y), color });
+                    return new Settlement({ position: vec3.fromValues(node.x, BOARD_TOP, node.y), color });
                 }
-                const y = TILE_HEIGHT / 2 + CITY_HEIGHT / 2;
-                return new City({ position: vec3.fromValues(node.x, y, node.y), color });
+                return new City({ position: vec3.fromValues(node.x, BOARD_TOP, node.y), color });
             },
         });
     });
@@ -248,7 +274,7 @@ function describeObjects(
                 signature: JSON.stringify([x, z]),
                 create: () => {
                     const preview = new Thief({
-                        position: vec3.fromValues(x, TILE_HEIGHT / 2, z),
+                        position: vec3.fromValues(x, BOARD_TOP, z),
                         color: vec3.fromValues(0.5, 0.5, 0.5),
                     });
                     preview.pickRadius = 0.45;
@@ -261,7 +287,7 @@ function describeObjects(
             const start = edge && nodesById.get(edge.node1);
             const end = edge && nodesById.get(edge.node2);
             if (!start || !end) throw new Error(`Invalid road slot ${target}`);
-            const y = TILE_HEIGHT / 2 + ROAD_HEIGHT / 2;
+            const y = BOARD_TOP;
             updates.set(`preview:road:${target}`, {
                 signature: JSON.stringify([start.x, start.y, end.x, end.y, [...color]]),
                 create: () => {
@@ -280,8 +306,7 @@ function describeObjects(
                 signature: JSON.stringify([node.x, node.y, [...color]]),
                 create: () => {
                     const isSettlement = placement.kind === 'settlement';
-                    const y = TILE_HEIGHT / 2 + (isSettlement ? SETTLEMENT_HEIGHT : CITY_HEIGHT) / 2;
-                    const options = { position: vec3.fromValues(node.x, y, node.y), color };
+                    const options = { position: vec3.fromValues(node.x, BOARD_TOP, node.y), color };
                     const preview = isSettlement ? new Settlement(options) : new City({
                         ...options,
                         // Slightly wider so it doesn't z-fight with the settlement it replaces.

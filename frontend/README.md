@@ -29,12 +29,14 @@ within a game, ignoring case and surrounding whitespace. Full games reject joins
 The game page URL is `/games/{gameId}/players/{playerId}`. Refreshing or reopening
 that URL resumes the same player without creating another one. The sidebar shows
 the game ID, creation time, your name, and connected players with their colors.
-Presence is refreshed every 3 seconds; a player disappears from the connected
+Presence is refreshed 2.5 times per second; a player disappears from the connected
 list after 15 seconds without a heartbeat. Player slots remain reserved when
 disconnected, so the same URL can reconnect. Open separate tabs with different
 names to test joining; create another game to verify isolation.
 The sidebar shows your resource and development cards as overlapping portrait
 cards, alongside your victory points. Hover a card to bring it to the front.
+Player names, award badges and Knight progress appear only in Connected players,
+not repeated in Your cards.
 Development cards are gray when unavailable, green when playable, and red once
 used; used cards stay in your hand for future mechanics. Hover for the reason
 a card is unavailable. Click a green card to play it.
@@ -43,11 +45,33 @@ Sessions live only in the backend's `games` dictionary and disappear on restart.
 The first player to reach **7 points** wins immediately, through buildings or
 playing Victory Point cards. Finished games reject further gameplay actions and
 show a Victory or Defeat screen to each player, including after a refresh.
+**See board** dismisses that screen so you can inspect the final board without
+resuming gameplay. **Play again** is also available next to **Back to lobby** in
+the sidebar while viewing a finished game.
 **Play again** returns everyone to a fresh lobby with the exact same game ID,
 names, colors and player slots. Any player can click it; simultaneous clicks
 reuse the same fresh lobby without resetting it twice. The host starts the next
 game. The board, hands, points, chat and turn state are reset.
 Both individual dice faces and their total are shown to every player.
+Longest Road and Largest Army each award 2 victory points and appear as badges
+beside the holder's name. The first player to play 3 Knights earns Largest Army;
+ties leave it with the current holder, and playing more Knights than the holder
+transfers the badge and its points. Until Largest Army is awarded, one knight
+symbol per played Knight appears beneath each player's name. Unplayed Knights
+do not count. The development deck contains 14 Knights and two of each other
+development card.
+
+Chat includes public, chronological action entries for buildings (including
+starting pieces and free roads), development cards played, development cards
+drawn, bank trades, accepted player trades, and award assignments, transfers or
+losses. Draw entries do not reveal which development card was drawn. Messages,
+offers and action entries share the same history and survive page refreshes;
+Play again clears them.
+Action entries use compact text in the acting player's color, without a separate
+label or board coordinates (for example, "Alice built a settlement.").
+Each backend longest-road calculation prints the player's longest trail through
+the evaluated edge and the current award holder/length before any award update.
+This includes short roads, ties and recalculations after a settlement cuts a road.
 Run one backend worker: this in-memory store is not shared across processes.
 There are no accounts or authentication; anyone with a player URL can use that
 identity. These URLs are identifiers for local development, not secure credentials.
@@ -67,7 +91,8 @@ Backend routes (under `/api` through Vite):
 - `POST /games/{gameId}/build/{kind}?playerId={playerId}` with `{ "target": 12 }`
   to place a piece (`kind` is `settlement`, `road`, or `city`)
 - `POST /games/{gameId}/trade?playerId={playerId}` with
-  `{ "give": "wood", "receive": "ore" }` to exchange 4 matching resources for 1
+  `{ "give": "wood", "receive": "ore" }` to exchange 4 matching resources (3 with
+  a general port, or 2 with the matching specialized port) for 1
   different resource during your normal turn (wood, brick, sheep, wheat, or ore)
 - `POST /games/{gameId}/dev-card?playerId={playerId}` to buy a development card
 - `POST /games/{gameId}/dev-card/{cardIndex}/play?playerId={playerId}` with
@@ -84,6 +109,23 @@ Backend routes (under `/api` through Vite):
 
 The former global board routes are replaced by game-scoped routes. Board resets
 retain claimed names and cannot reduce capacity below the number of joined players.
+
+### Ports
+
+The standard board has nine randomly placed shoreline ports: one for each of the
+five resources and four general ports. Each spans two neighboring coastal nodes;
+ports do not share nodes. The first player to build a settlement at either node
+exclusively owns that port, including during setup. Roads do not claim ports, and
+upgrading to a city preserves ownership. Smaller boards use as many spaced ports
+as their shoreline can accommodate.
+
+Ports appear as small piers just offshore, aligned with their shore edge, each
+with its own model per resource (and one for general ports). The pier's flag
+turns the owner's color once claimed. A general port changes the normal trade to 3:1;
+specialized ports add resource-specific 2:1 trade buttons. The trade form shows
+each resource's best rate; discounts never stack. Board state includes `ports`
+with endpoint node ids, a resource (`null` for general), and owner player id.
+Each player's `tradeRates` exposes the authoritative rate for each resource.
 
 Run the backend HTTP tests from the repository root:
 
@@ -142,7 +184,7 @@ are unavailable during setup. Normal turn 1 begins with player 1 after the final
 road. Dice roll automatically once when normal turn 1 begins and each time the
 turn advances, immediately distributing resources; there is no roll button.
 The legacy roll endpoint rejects attempts to roll again.
-The thief starts on the desert as a thin black cylinder with a spherical head.
+The thief starts on the desert as a black hooded figure.
 Rolling seven sets `turn.thiefMovePending`: the current player must click a
 highlighted thief preview on a different tile before building, trading, buying
 cards or ending the turn. Use **Move thief** to show the previews again after
@@ -225,6 +267,44 @@ so the number tokens' digit cutouts remain open.
 Use Vite `?url` imports for bundled assets, or browser-accessible URLs for files
 in `public`; filesystem paths are not supported. `Suzzy.create(options, signal)`
 uses this loader to create the scene object asynchronously.
+`loadOBJ` also accepts a map of material colors overriding the MTL ones; a
+Blender duplicate suffix such as `tint.001` still matches `tint`.
+
+## Board models
+
+Tiles, ports and pieces are OBJ/MTL pairs in `../blender/models`, bundled as text
+(no extra requests) and loaded with `loadModel(name, tint?)`. They are low-poly
+placeholders meant to be replaced in Blender. Import an OBJ with Blender's
+default axes (Y up, -Z forward), edit it, then export it over the same file with
+its materials. Keep these conventions:
+
+- 1 Blender unit = 1 board unit; each model rests on y = 0 and is centered in XZ.
+- `tiles/{forest,hills,pasture,fields,mountains,desert}`: flat-top hexagons with
+  a corner pointing to +X, radius 0.99 and top surface at y = 0.15. Keep the
+  center (radius ~0.3) clear for the number token and the thief.
+- `ports/{wood,brick,sheep,wheat,ore,general}`: origin at water level, X along
+  the coast, +Z towards the open sea; the coast is about 0.28 behind the origin
+  and the tile top at y = 0.15.
+- `pieces/settlement`, `pieces/city` and `pieces/thief` stand on the tile top.
+- `pieces/road` is authored for a 1-unit edge along X and stretched to the
+  edge length.
+- Faces using a material named `tint` take the player color (the preview color for
+  previews, black or gray for the thief); `tint_dark` takes a darker shade. Port
+  flags only take the owner's color once claimed, otherwise they keep the MTL color.
+  Other materials keep their MTL diffuse color (`Kd`); textures are ignored.
+
+The water is still a generated cylinder.
+
+## Environment
+
+The background is an equirectangular Radiance HDRI
+(`public/hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr`, CC0 from
+[Poly Haven](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky)),
+set through `Scene.environmentUrl`. The renderer draws it with ACES tone mapping,
+uses a blurred copy of it as ambient light, and points the sun at its brightest
+pixel (raised to at least 36 degrees). Replace the file and `ENVIRONMENT_URL` in
+`game/demo-scene.ts` to use another `.hdr`. Until it loads, a flat gray background
+and neutral ambient light are used.
 
 ## Controls
 
@@ -233,6 +313,7 @@ uses this loader to create the scene object asynchronously.
 - Click without dragging to select a highlighted placement target.
 - WASD (ZQSD on AZERTY) moves horizontally.
 - Space moves up; Shift moves down.
+- The camera cannot go below y = 0.5 or farther than 20 units from the board center.
 
 Keyboard input only affects a focused canvas, so other React controls can coexist
 with the scene. Clicking or dragging the canvas focuses it for keyboard movement.

@@ -1,0 +1,36 @@
+# Catan fields materials
+
+newmtl ground
+Ka 0 0 0
+Kd 0.8200 0.7000 0.3200
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl cliff
+Ka 0 0 0
+Kd 0.4500 0.3300 0.1600
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl wheat
+Ka 0 0 0
+Kd 0.9600 0.8000 0.2800
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl wheat_dark
+Ka 0 0 0
+Kd 0.8500 0.6200 0.2000
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl hay
+Ka 0 0 0
+Kd 0.9000 0.7500 0.3800
+Ks 0 0 0
+d 1
+illum 1

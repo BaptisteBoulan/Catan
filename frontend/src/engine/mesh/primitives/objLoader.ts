@@ -32,11 +32,14 @@ export async function loadOBJFromPath(
  * @param objText Raw string content of the .obj file
  * @param mtlText Optional raw string content of the corresponding .mtl file
  * @param defaultColor Fallback color if no material is defined or found
+ * @param materialOverrides Colors replacing materials by name. Blender's duplicate suffixes
+ *     (`tint.001`) are ignored, so `tint` also matches `tint.001`.
  */
 export function loadOBJ(
     objText: string, 
     mtlText?: string, 
-    defaultColor: Vec3 = vec3.fromValues(0.2, 0.2, 0.2)
+    defaultColor: Vec3 = vec3.fromValues(0.2, 0.2, 0.2),
+    materialOverrides: Readonly<Record<string, Vec3>> = {},
 ): Geometry {
     // 1. Parse MTL file content if provided (extracts diffuse color `Kd`)
     const materials = new Map<string, Vec3>();
@@ -70,6 +73,7 @@ export function loadOBJ(
     const tempNormals: number[][] = [];
 
     let currentMaterialColor: Vec3 = defaultColor;
+    let currentMaterialName = "";
     
     // Maps unique OBJ vertex combo string ("v/vt/vn") to new unified index
     const vertexMap = new Map<string, number>();
@@ -97,8 +101,12 @@ export function loadOBJ(
             ]);
         } else if (type === "usemtl") {
             const mtlName = parts[1];
-            if (materials.has(mtlName)) {
-                currentMaterialColor = materials.get(mtlName)!;
+            const baseName = mtlName.replace(/\.\d+$/, "");
+            const color = Object.hasOwn(materialOverrides, baseName)
+                ? materialOverrides[baseName] : materials.get(mtlName);
+            if (color) {
+                currentMaterialColor = color;
+                currentMaterialName = mtlName;
             }
         } else if (type === "f") {
             // Face definition (can be triangles, quads, or n-gons)
@@ -106,8 +114,10 @@ export function loadOBJ(
             const parsedIndices: number[] = [];
 
             for (const vertexStr of faceVertices) {
-                if (vertexMap.has(vertexStr)) {
-                    parsedIndices.push(vertexMap.get(vertexStr)!);
+                // Vertices shared by faces with different materials need their own colors.
+                const vertexKey = `${vertexStr}|${currentMaterialName}`;
+                if (vertexMap.has(vertexKey)) {
+                    parsedIndices.push(vertexMap.get(vertexKey)!);
                 } else {
                     const indicesParts = vertexStr.split("/");
                     const pIdx = parseInt(indicesParts[0], 10) - 1;
@@ -117,7 +127,7 @@ export function loadOBJ(
                     const norm = (nIdx >= 0 && tempNormals[nIdx]) ? tempNormals[nIdx] : [0, 1, 0];
 
                     const newIndex = positions.length / 3;
-                    vertexMap.set(vertexStr, newIndex);
+                    vertexMap.set(vertexKey, newIndex);
 
                     positions.push(...pos);
                     normals.push(...norm);

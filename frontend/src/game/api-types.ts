@@ -13,7 +13,11 @@ export type PlayerDto = {
     name: string;
     color: PlayerColor;
     points: number;
+    hasLongestRoad: boolean;
+    hasLargestArmy: boolean;
+    knightsPlayed: number;
     resources: ResourceCard[];
+    tradeRates: Record<ResourceCard, number>;
     devCards: DevCardDto[];
 };
 
@@ -26,6 +30,7 @@ export type TradeRequestDto = {
 
 export type ChatMessageDto = {
     id: number;
+    kind: 'message' | 'action';
     senderId: number;
     recipientId: number | null;
     text: string | null;
@@ -81,6 +86,10 @@ export type EdgeDto = {
     owner: number | null;
 };
 
+export type PortDto = EdgeDto & {
+    resource: ResourceCard | null;
+};
+
 export type TurnDto = {
     started: boolean;
     currentPlayer: number;
@@ -103,6 +112,7 @@ export type GameDto = {
         tiles: TileDto[];
         nodes: NodeDto[];
         edges: EdgeDto[];
+        ports: PortDto[];
     };
 };
 

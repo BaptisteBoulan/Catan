@@ -39,6 +39,45 @@ class SetupApiTests(unittest.IsolatedAsyncioTestCase):
                                    if message["type"] == "http.response.body"))
         return status, data
 
+    async def test_port_claim_and_discounted_trade_are_in_api_state(self):
+        for resource in (None, *Resource):
+            with self.subTest(resource=resource):
+                _, identity = await self.request(
+                    "POST", "/games", {"name": "Alice", "playerCount": 1})
+                root = f"/games/{identity['gameId']}"
+                game = games[identity["gameId"]].game
+                port = next(port for port in game.board.ports if port.resource == resource)
+                index = game.board.ports.index(port)
+                _, initial = await self.request("GET", f"{root}?playerId=0")
+                self.assertIsNone(initial["board"]["ports"][index]["owner"])
+                self.assertTrue(all(rate == 4 for rate in initial["players"][0]["tradeRates"].values()))
+                await self.request("POST", f"{root}/start?playerId=0")
+                status, claimed = await self.request(
+                    "POST", f"{root}/build/settlement?playerId=0",
+                    {"target": port.edge.node2.id})
+                self.assertEqual(status, 200)
+                self.assertEqual(claimed["board"]["ports"][index]["owner"], 0)
+                give = resource or Resource.WOOD
+                receive = Resource.ORE if give != Resource.ORE else Resource.WOOD
+                rate = 3 if resource is None else 2
+                self.assertEqual(claimed["players"][0]["tradeRates"][give.value], rate)
+                game.setupStep = None
+                game.setupNode = None
+                game.diceRoll = 8
+                game.players[0].resources = [give] * (rate - 1)
+                request = {"give": give.value, "receive": receive.value}
+                status, error = await self.request("POST", f"{root}/trade?playerId=0", request)
+                self.assertEqual(status, 409)
+                self.assertIn(f"needs {rate} {give.value}", error["detail"])
+                game.players[0].resources.append(give)
+                status, traded = await self.request("POST", f"{root}/trade?playerId=0", request)
+                self.assertEqual(status, 200)
+                self.assertEqual(traded["players"][0]["resources"], [receive.value])
+                _, refreshed = await self.request("GET", f"{root}?playerId=0")
+                self.assertEqual(refreshed["board"]["ports"], traded["board"]["ports"])
+                self.assertEqual(refreshed["players"][0]["tradeRates"],
+                                 traded["players"][0]["tradeRates"])
+
     async def test_chat_messages_and_trade_offer_acceptance(self):
         _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})
         root = f"/games/{identity['gameId']}"
@@ -78,9 +117,14 @@ class SetupApiTests(unittest.IsolatedAsyncioTestCase):
             game.players[1].resources,
             [Resource.BRICK, Resource.WHEAT, Resource.WOOD, Resource.WOOD],
         )
+        self.assertEqual(response["messages"][-1]["kind"], "action")
+        self.assertEqual(response["messages"][-1]["text"],
+                         "Alice exchanged 2 wood with Bob for 1 brick.")
+        before = len(response["messages"])
         status, _ = await self.request(
             "POST", f"{root}/chat/{offerId}/accept?playerId=1")
         self.assertEqual(status, 409)
+        self.assertEqual(len(game.chat), before)
         _, chat = await self.request("GET", f"{root}/chat?playerId=0")
         self.assertEqual(chat["messages"], response["messages"])
         game.players[0].resources.append(Resource.WOOD)
@@ -139,6 +183,9 @@ class SetupApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(fresh.started)
         self.assertIsNone(fresh.winner)
         self.assertIsNone(fresh.diceValues)
+        self.assertIsNone(fresh.largestArmyHolder)
+        self.assertIsNone(fresh.longestRoadHolder)
+        self.assertTrue(all(player.knightsPlayed == 0 for player in fresh.players))
         self.assertEqual(session.chat, [])
         status, replay = await self.request("POST", f"{root}/play-again?playerId=1")
         self.assertEqual(status, 200)
@@ -153,6 +200,107 @@ class SetupApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["turn"]["setup"], {"round": 1, "kind": "settlement"})
         status, _ = await self.request("POST", f"{root}/play-again?playerId=1")
         self.assertEqual(status, 409)
+
+    async def test_action_history_in_chat_and_largest_army_survive_refresh(self):
+        _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})
+        root = f"/games/{identity['gameId']}"
+        await self.request("POST", f"{root}/players", {"name": "Bob"})
+        await self.request("POST", f"{root}/start?playerId=0")
+        game = games[identity["gameId"]].game
+        with patch.object(game, "throwDice", return_value=8):
+            while game.setupStep is not None:
+                playerId = game.currentPlayer
+                kind = game.setupKind
+                target = game.buildTargets(playerId, kind)[0]
+                status, _ = await self.request(
+                    "POST", f"{root}/build/{kind}?playerId={playerId}", {"target": target})
+                self.assertEqual(status, 200)
+        self.assertEqual(len(game.chat), 8)
+        self.assertEqual(sum("built a settlement" in entry["text"] for entry in game.chat), 4)
+        self.assertEqual(sum("built a road" in entry["text"] for entry in game.chat), 4)
+        self.assertTrue(all(entry["kind"] == "action" for entry in game.chat))
+        self.assertEqual(
+            [entry["text"] for entry in game.chat],
+            [f"{name} built a {kind}."
+             for name in ("Alice", "Bob", "Bob", "Alice")
+             for kind in ("settlement", "road")])
+
+        _, chat = await self.request("POST", f"{root}/chat?playerId=0", {"text": "Hello!"})
+        self.assertEqual(chat["messages"][-1]["kind"], "message")
+        self.assertEqual(chat["messages"][-1]["id"], 8)
+        before = len(game.chat)
+        for path, body in (
+            ("build/road", {"target": -1}),
+            ("dev-card", None),
+            ("trade", {"give": "wood", "receive": "ore"}),
+        ):
+            status, _ = await self.request("POST", f"{root}/{path}?playerId=0", body)
+            self.assertEqual(status, 409)
+        self.assertEqual(len(game.chat), before)
+
+        player = game.players[0]
+        player.resources = [Resource.SHEEP, Resource.WHEAT, Resource.ORE]
+        game.devCardDeck = [Monopoly()]
+        status, _ = await self.request("POST", f"{root}/dev-card?playerId=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(game.chat[-1]["text"], "Alice drew a development card.")
+        self.assertNotIn("Monopoly", game.chat[-1]["text"])
+
+        player.resources = [Resource.WOOD] * 4
+        status, _ = await self.request(
+            "POST", f"{root}/trade?playerId=0", {"give": "wood", "receive": "ore"})
+        self.assertEqual(status, 200)
+        self.assertEqual(game.chat[-1]["text"], "Alice traded 4 wood for 1 ore with the bank.")
+
+        player.resources = [Resource.ORE] * 3 + [Resource.WHEAT] * 2
+        target = game.buildTargets(0, "city")[0]
+        status, _ = await self.request(
+            "POST", f"{root}/build/city?playerId=0", {"target": target})
+        self.assertEqual(status, 200)
+        self.assertEqual(game.chat[-1]["text"], "Alice built a city.")
+
+        player.devCards = [Knight(), Knight(), Knight()]
+        player.devCards[0].used = True
+        player.devCards[1].used = True
+        status, state = await self.request("POST", f"{root}/dev-card/2/play?playerId=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["players"][0]["knightsPlayed"], 3)
+        self.assertTrue(state["players"][0]["hasLargestArmy"])
+        self.assertEqual(state["players"][0]["points"], 5)
+        self.assertEqual(game.chat[-2]["text"], "Alice played Knight.")
+        self.assertIn("Largest Army (+2 victory points)", game.chat[-1]["text"])
+        _, heartbeat = await self.request("POST", f"{root}/players/1/heartbeat")
+        _, refreshed = await self.request("GET", f"{root}?playerId=0")
+        self.assertEqual(heartbeat["state"]["players"], state["players"])
+        self.assertEqual(refreshed["players"], state["players"])
+        _, aliceChat = await self.request("GET", f"{root}/chat?playerId=0")
+        _, bobChat = await self.request("GET", f"{root}/chat?playerId=1")
+        self.assertEqual(aliceChat, bobChat)
+        messages = aliceChat["messages"]
+        self.assertEqual([entry["id"] for entry in messages], list(range(len(messages))))
+        self.assertTrue(all(entry["createdAt"] for entry in messages))
+        self.assertEqual(messages[8]["text"], "Hello!")
+        status, _ = await self.request("POST", f"{root}/chat/{messages[-1]['id']}/accept?playerId=1")
+        self.assertEqual(status, 409)
+
+    async def test_lobby_board_replacement_keeps_chat_and_demo_appends_actions(self):
+        _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})
+        root = f"/games/{identity['gameId']}"
+        _, original = await self.request(
+            "POST", f"{root}/chat?playerId=0", {"text": "Keep this message"})
+        status, _ = await self.request(
+            "POST", f"{root}/new-board?playerId=0", {"playerCount": 2})
+        self.assertEqual(status, 200)
+        _, chat = await self.request("GET", f"{root}/chat?playerId=0")
+        self.assertEqual(chat, original)
+        status, _ = await self.request(
+            "POST", f"{root}/demo-game?playerId=0", {"playerCount": 2, "roundCount": 0})
+        self.assertEqual(status, 200)
+        _, chat = await self.request("GET", f"{root}/chat?playerId=0")
+        self.assertEqual(chat["messages"][0], original["messages"][0])
+        self.assertEqual(len(chat["messages"]), 9)
+        self.assertEqual([entry["id"] for entry in chat["messages"]], list(range(9)))
+        self.assertTrue(all(entry["kind"] == "action" for entry in chat["messages"][1:]))
 
     async def test_development_cards_validation_effects_and_heartbeat_sync(self):
         _, identity = await self.request("POST", "/games", {"name": "Alice", "playerCount": 2})

@@ -39,6 +39,7 @@ function gameState() {
         { id: 1, x: 1, y: 0, building: 'none', owner: null },
       ],
       edges: [{ node1: 0, node2: 1, owner: null }],
+      ports: [],
     },
   }
 }
@@ -57,7 +58,113 @@ function uploadGeometry(scene) {
   return buffers
 }
 
-test('thief has a black cylinder and sphere, with clickable previews and isolated movement', async () => {
+function colorsOf(geometry) {
+  const colors = new Set()
+  for (let i = 0; i < geometry.colors.length; i += 3) {
+    colors.add([...geometry.colors.slice(i, i + 3)].join(','))
+  }
+  return colors
+}
+
+const asKey = (rgb) => rgb.map(Math.fround).join(',')
+
+test('ports use per-resource models facing the sea and recolor without replacing terrain', async () => {
+  const scene = createDemoScene()
+  const game = gameState()
+  game.board.nodes = [
+    { id: 0, x: 2, y: 1, building: 'none', owner: null },
+    { id: 1, x: 2, y: 2, building: 'none', owner: null },
+  ]
+  game.board.ports = [{ node1: 0, node2: 1, resource: 'wood', owner: null }]
+  await scene.sync(game)
+  const port = scene.root.children.find((object) => object.name === 'Port wood')
+  const terrain = scene.root.children.find((object) => object.name === 'Terrain')
+  assert.ok(port)
+  assert.equal(port.position[0], Math.fround(2.28))
+  assert.equal(port.position[2], 1.5)
+  // The model's +Z (open sea) points away from the board, towards +X here.
+  assert.ok(Math.abs(Math.sin(port.rotation[1]) - 1) < 1e-6)
+  const unowned = colorsOf(port.mesh.geometry)
+  assert.ok(unowned.has(asKey([0.92, 0.9, 0.84])))
+  assert.ok(!unowned.has(asKey([0.9, 0.15, 0.15])))
+  const buffers = uploadGeometry(scene)
+  await scene.sync(structuredClone(game))
+  assert.ok(scene.root.children.includes(port))
+  assert.equal(uploadGeometry(scene).length, 0)
+  game.board.ports[0].owner = 0
+  await scene.sync(game)
+  const owned = scene.root.children.find((object) => object.name === 'Port wood')
+  assert.notEqual(owned, port)
+  assert.ok(scene.root.children.includes(terrain))
+  assert.deepEqual([...owned.position], [...port.position])
+  assert.equal(buffers.filter((buffer) => buffer.destroyed).length, 4)
+  const ownedColors = colorsOf(owned.mesh.geometry)
+  assert.ok(ownedColors.has(asKey([0.9, 0.15, 0.15])))
+  assert.ok(!ownedColors.has(asKey([0.92, 0.9, 0.84])))
+  game.board.ports = []
+  await scene.sync(game)
+  assert.ok(!scene.root.children.includes(owned))
+  scene.destroy()
+  assert.ok(buffers.every((buffer) => buffer.destroyed))
+})
+
+test('every landscape and port type has its own model', async () => {
+  const scene = createDemoScene()
+  const game = gameState()
+  game.board.tiles = [1, 2, 3, 4, 5, 6].map((landscape, i) => ({
+    i, j: 0, landscape, diceNumber: landscape === 6 ? null : 6, nodes: [], isOccupiedByThief: false,
+  }))
+  const resources = ['wood', 'brick', 'sheep', 'wheat', 'ore', null]
+  game.board.nodes = resources.flatMap((_, i) => [
+    { id: i * 2, x: 10 + i, y: 0, building: 'none', owner: null },
+    { id: i * 2 + 1, x: 10 + i, y: 1, building: 'none', owner: null },
+  ])
+  game.board.edges = []
+  game.board.ports = resources.map((resource, i) => ({
+    node1: i * 2, node2: i * 2 + 1, resource, owner: null,
+  }))
+  globalThis.fetch = async () => new Response('v 0 0 0\nv 1 0 0\nv 0 0 1\nf 1 2 3\n')
+  try {
+    await scene.sync(game)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  const terrain = scene.root.children.find((object) => object.name === 'Terrain')
+  const tiles = terrain.children.filter((object) => object.name === 'HexTile')
+  assert.equal(tiles.length, 6)
+  const tileSignatures = new Set(tiles.map((tile) => [...tile.mesh.geometry.colors].join()))
+  assert.equal(tileSignatures.size, 6)
+  for (const tile of tiles) {
+    const ys = tile.mesh.geometry.positions.filter((_, index) => index % 3 === 1)
+    assert.equal(Math.min(...ys), 0)
+    assert.equal(tile.position[1], Math.fround(-0.075))
+  }
+  const ports = scene.root.children.filter((object) => object.name.startsWith('Port '))
+  assert.deepEqual(ports.map((port) => port.name).sort(),
+    ['Port brick', 'Port general', 'Port ore', 'Port sheep', 'Port wheat', 'Port wood'])
+  const portSignatures = ports.map(({ mesh }) => [...mesh.geometry.positions, ...mesh.geometry.colors].join())
+  assert.equal(new Set(portSignatures).size, 6)
+  scene.destroy()
+})
+
+test('the camera stays above y = 0.5 and within 20 units of the board', () => {
+  const scene = createDemoScene()
+  const camera = scene.camera
+  camera.yaw = 0
+  camera.move(0, 0, -1, 60_000)
+  assert.equal(camera.position[1], 0.5)
+  camera.move(1, 0, 0, 60_000)
+  assert.ok(Math.hypot(...camera.position) <= 20 + 1e-4)
+  assert.equal(camera.position[1], 0.5)
+  camera.move(0, 0, 1, 60_000)
+  assert.ok(Math.hypot(...camera.position) <= 20 + 1e-4)
+  assert.ok(camera.position[1] > 19)
+  camera.move(0, 0, -1, 60_000)
+  assert.equal(camera.position[1], 0.5)
+  scene.destroy()
+})
+
+test('thief is a black model, with clickable gray previews and isolated movement', async () => {
   const scene = createDemoScene()
   const game = gameState()
   game.board.tiles.push({
@@ -67,13 +174,10 @@ test('thief has a black cylinder and sphere, with clickable previews and isolate
   const thief = scene.root.children.find((object) => object.name === 'Thief')
   const terrain = scene.root.children.find((object) => object.name === 'Terrain')
   assert.ok(thief)
-  assert.equal(thief.children.length, 2)
-  assert.equal(thief.children[0].name, 'Thief body')
-  assert.equal(thief.children[1].name, 'Thief head')
-  for (const child of thief.children) {
-    assert.ok(child.mesh.geometry.colors.every((value) => value === 0))
-  }
-  assert.ok(thief.children[1].position[1] > thief.children[0].position[1])
+  assert.ok(thief.mesh.geometry.colors.every((value) => value === 0))
+  const ys = thief.mesh.geometry.positions.filter((_, index) => index % 3 === 1)
+  assert.equal(Math.min(...ys), 0)
+  assert.ok(Math.max(...ys) > 0.4)
   const buffers = uploadGeometry(scene)
   let picked
   const placement = {
@@ -85,7 +189,7 @@ test('thief has a black cylinder and sphere, with clickable previews and isolate
   assert.ok(preview)
   assert.equal(preview.position[0], 1.5)
   assert.equal(preview.pickRadius, 0.45)
-  assert.ok(preview.children[0].mesh.geometry.colors.every((value) => value === 0.5))
+  assert.deepEqual(colorsOf(preview.mesh.geometry), new Set([asKey([0.5, 0.5, 0.5]), asKey([0.3, 0.3, 0.3])]))
   preview.onPick()
   assert.equal(picked, 1)
   const previewBuffers = uploadGeometry(scene)
@@ -104,7 +208,7 @@ test('thief has a black cylinder and sphere, with clickable previews and isolate
   const moved = scene.root.children.find((object) => object.name === 'Thief')
   assert.equal(moved.position[0], 1.5)
   assert.equal(moved.position[2], Math.fround(Math.sqrt(3) / 2))
-  assert.equal(buffers.filter((buffer) => buffer.destroyed).length, 8)
+  assert.equal(buffers.filter((buffer) => buffer.destroyed).length, 4)
   assert.ok(previewBuffers.every((buffer) => buffer.destroyed))
   scene.destroy()
   assert.ok(buffers.every((buffer) => buffer.destroyed))

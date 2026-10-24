@@ -50,6 +50,17 @@
   font-size: 2rem;
 }
 
+.game-result-buttons,
+.game-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.game-result-buttons {
+  justify-content: center;
+}
+
 .sidebar {
   width: 320px;
   flex-shrink: 0;
@@ -97,27 +108,49 @@
   background: #202024;
 }
 
-.player-list-name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 0;
-}
-
-.player-card-panel h3 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 1rem;
-}
-
 .player-card-panel h4 {
   margin: 14px 0 8px;
   color: #d4d4d8;
   font-size: 0.8rem;
   text-transform: uppercase;
+}
+
+.sidebar li {
+  flex-wrap: wrap;
+}
+
+.longest-road-badge,
+.largest-army-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid #a58b30;
+  border-radius: 4px;
+  background: #342e18;
+  color: #facc15;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.knight-progress {
+  flex-basis: 100%;
+  color: #93c5fd;
+  font-size: 1.3rem;
+  letter-spacing: 4px;
+  line-height: 1.4;
+}
+
+.chat-message.action-log {
+  padding: 2px 8px;
+  border: 0;
+  border-left: 2px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.8rem;
+}
+
+.action-log .chat-message-text {
+  margin: 0;
 }
 
 .victory-points {

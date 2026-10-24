@@ -3,13 +3,15 @@ import { WebGpuCanvas } from './components/WebGpuCanvas'
 import type {
   BuildKind, BuildTargetsDto, ChatMessageDto, ChatRequestDto, GameIdentityDto,
   GameSessionDto, JoinedPlayerDto, PlacementKind, PlayDevCardRequestDto,
-  ResourceCard, TradeRequestDto,
+  PlayerDto, ResourceCard, TradeRequestDto,
 } from './game/api-types'
 import { createDemoScene, type GameScene } from './game/demo-scene'
 import './App.css'
 
 const MIN_PLAYERS = 1
 const MAX_PLAYERS = 5
+/** Presence and game-state refresh period (2.5 times per second). */
+const HEARTBEAT_INTERVAL_MS = 400
 
 const BUILD_ACTIONS: { kind: BuildKind, label: string, cost: string }[] = [
   { kind: 'road', label: 'Build road', cost: '🌲 1 wood + 🧱 1 brick' },
@@ -36,6 +38,24 @@ type GameLocation = Pick<GameIdentityDto, 'gameId' | 'playerId'>
 const DIE_PIPS = [
   [4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8],
 ]
+
+function PlayerAwards({ player, showKnights }: { player: PlayerDto, showKnights: boolean }) {
+  return <>
+    {player.hasLongestRoad && (
+      <span className="longest-road-badge" title="Longest road: +2 victory points">Longest road</span>
+    )}
+    {player.hasLargestArmy && (
+      <span className="largest-army-badge" title="Largest army: +2 victory points">♞ Largest army</span>
+    )}
+    {showKnights && player.knightsPlayed > 0 && (
+      <span className="knight-progress" role="img"
+        aria-label={`${player.knightsPlayed} Knights played`}
+        title={`${player.knightsPlayed} Knights played; 3 needed for Largest Army`}>
+        {'♞'.repeat(player.knightsPlayed)}
+      </span>
+    )}
+  </>
+}
 
 function Dice({ values, total }: { values: [number, number], total: number }) {
   return (
@@ -82,6 +102,7 @@ function App() {
   const [presenceError, setPresenceError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [isActing, setIsActing] = useState(false)
+  const [isViewingFinalBoard, setIsViewingFinalBoard] = useState(false)
   const [placement, setPlacement] = useState<PendingPlacement | null>(null)
   const [tradeContext, setTradeContext] = useState<string | null>(null)
   const [tradeGive, setTradeGive] = useState<ResourceCard>('wood')
@@ -112,6 +133,7 @@ function App() {
 
   useEffect(() => {
     const onPopState = () => {
+      setIsViewingFinalBoard(false)
       setGame(null)
       setPlayers([])
       setError(null)
@@ -137,14 +159,17 @@ function App() {
         )
         if (abort.signal.aborted) return
         setPlayers(result.players)
-        if (revision === gameRevision.current && revision % 2 === 0) setGame(result.state)
+        if (revision === gameRevision.current && revision % 2 === 0) {
+          setGame(result.state)
+          if (result.state.turn.winner === null) setIsViewingFinalBoard(false)
+        }
         setPresenceError(null)
       } catch (cause) {
         if (abort.signal.aborted) return
         setPlayers([])
         setPresenceError(cause instanceof Error ? cause.message : String(cause))
       }
-      if (!abort.signal.aborted) timer = setTimeout(() => void updatePresence(), 3000)
+      if (!abort.signal.aborted) timer = setTimeout(() => void updatePresence(), HEARTBEAT_INTERVAL_MS)
     }
 
     async function loadGame() {
@@ -269,6 +294,7 @@ function App() {
   }, [game, isPlacing, placement, location, placeBuilding])
 
   function navigate(next: GameLocation | null) {
+    setIsViewingFinalBoard(false)
     window.history.pushState(null, '', next ? `/games/${next.gameId}/players/${next.playerId}` : '/')
     setGame(null)
     setPlayers([])
@@ -330,6 +356,7 @@ function App() {
       setGame(session)
       setPlayers(session.joinedPlayers)
       if (action === 'play-again') {
+        setIsViewingFinalBoard(false)
         setChatMessages([])
         setChatText('')
         setChatMode('message')
@@ -448,9 +475,11 @@ function App() {
 
   const currentPlayer = game?.players.find((player) => player.id === location.playerId)
   const connectedPlayers = players.filter((player) => player.connected)
+  const showKnightProgress = !game?.players.some((player) => player.hasLargestArmy)
   const turn = game?.turn
   const turnPlayer = turn?.started ? game?.players[turn.currentPlayer] : undefined
   const winner = turn?.winner != null ? game?.players[turn.winner] : undefined
+  const showGameResult = !!winner && !isViewingFinalBoard
   const isMyTurn = !!turn?.started && !winner && turn.currentPlayer === location.playerId
   const canOfferTrade = isMyTurn && turn?.diceRoll !== null && !turn.setup
     && !turn.thiefMovePending && turn.freeRoadsRemaining === 0
@@ -458,13 +487,25 @@ function App() {
   const isHost = location.playerId === 0
   const resourceCount = (kind: ResourceCard) =>
     currentPlayer?.resources.filter((resource) => resource === kind).length ?? 0
+  const tradeRate = (kind: ResourceCard) => currentPlayer?.tradeRates[kind] ?? 4
+  const generalTradeRate = game?.board.ports.some(
+    (port) => port.owner === location.playerId && port.resource === null,
+  ) ? 3 : 4
+  const openTrade = (give: ResourceCard) => {
+    setPlacement(null)
+    setCardChoice(null)
+    setActionError(null)
+    setTradeGive(give)
+    setTradeReceive(give === 'wood' ? 'brick' : 'wood')
+    setTradeContext(placementContext)
+  }
   const isTrading = tradeContext === placementContext
   const selectedCard = cardChoice?.context === placementContext
     ? currentPlayer?.devCards[cardChoice.index] : undefined
 
   return (
     <main className="app">
-      {winner && (
+      {showGameResult && (
         <div className="game-result-backdrop">
           <section className="game-result" role="dialog" aria-modal="true"
             aria-labelledby="game-result-title" aria-describedby="game-result-description">
@@ -473,14 +514,18 @@ function App() {
               {winner.name} wins with {winner.points} points!
             </p>
             <p>Play again in the same lobby with the same players.</p>
-            <button autoFocus disabled={isActing} onClick={() => void gameAction('play-again')}>
-              {isActing ? 'Returning to lobby...' : 'Play again'}
-            </button>
+            <div className="game-result-buttons">
+              <button autoFocus disabled={isActing} onClick={() => void gameAction('play-again')}>
+                {isActing ? 'Returning to lobby...' : 'Play again'}
+              </button>
+              <button className="secondary-button" disabled={isActing}
+                onClick={() => setIsViewingFinalBoard(true)}>See board</button>
+            </div>
             {actionError && <p role="alert">{actionError}</p>}
           </section>
         </div>
       )}
-      <aside className="sidebar" inert={!!winner}>
+      <aside className="sidebar" inert={showGameResult}>
         <h1>Game {location.gameId}</h1>
         {currentPlayer && <p>Playing as <strong>{currentPlayer.name}</strong></p>}
         {game && <p className="created-at">Created {new Date(game.createdAt).toLocaleString()}</p>}
@@ -508,17 +553,14 @@ function App() {
             <li key={player.id}>
               <span className="player-color" style={{ backgroundColor: player.color }} />
               {player.name}{player.id === location.playerId ? ' (you)' : ''}
+              <PlayerAwards player={player} showKnights={showKnightProgress} />
             </li>
           ))}
         </ul>
-        <h2>Player cards</h2>
+        <h2>Your cards</h2>
         <div className="player-card-list">
-          {game?.players.map((player) => player.id === location.playerId ? (
+          {game?.players.filter((player) => player.id === location.playerId).map((player) => (
             <section className="player-card-panel" key={player.id}>
-              <h3>
-                <span className="player-color" style={{ backgroundColor: player.color }} />
-                {player.name} (you)
-              </h3>
               <p className="victory-points">{player.points} victory points</p>
               <h4>Resources</h4>
               {player.resources.length > 0 ? (
@@ -541,7 +583,7 @@ function App() {
                       <button
                         className={`dev-card ${card.used ? 'card-used'
                           : card.unavailableReason ? 'card-unavailable' : 'card-playable'}`}
-                        disabled={isActing || card.used || card.unavailableReason !== null}
+                        disabled={!!winner || isActing || card.used || card.unavailableReason !== null}
                         title={card.unavailableReason ?? `Click to play ${card.name}`}
                         onClick={() => {
                           if (card.name === 'Monopoly' || card.name === 'Year of Plenty') {
@@ -599,22 +641,24 @@ function App() {
                 </form>
               )}
             </section>
-          ) : (
-            <p className="player-list-name" key={player.id}>
-              <span className="player-color" style={{ backgroundColor: player.color }} />
-              {player.name}
-            </p>
           ))}
         </div>
         {presenceError && <p role="alert">Connection lost: {presenceError}. Retrying...</p>}
         {actionError && !isMyTurn && <p role="alert">{actionError}</p>}
-        <button onClick={() => navigate(null)}>Back to lobby</button>
+        <div className="game-navigation">
+          <button onClick={() => navigate(null)}>Back to lobby</button>
+          {winner && (
+            <button disabled={isActing} onClick={() => void gameAction('play-again')}>
+              {isActing ? 'Returning to lobby...' : 'Play again'}
+            </button>
+          )}
+        </div>
       </aside>
-      <section className="board-area" aria-label="Game board" inert={!!winner}>
+      <section className="board-area" aria-label="Game board" inert={showGameResult}>
         {game ? <WebGpuCanvas createScene={createDemoScene} updateScene={updateScene} className="game-canvas" />
           : <p role={error ? 'alert' : 'status'}>{error ?? 'Loading game...'}</p>}
       </section>
-      <aside className="action-panel" aria-label="Turn actions and chat" inert={!!winner}>
+      <aside className="action-panel" aria-label="Turn actions and chat" inert={showGameResult}>
         {isMyTurn && turn && (
           <section className="turn-actions">
           <h2>{turn.setup ? `Starting placements: round ${turn.setup.round}` : 'Your turn'}</h2>
@@ -670,14 +714,17 @@ function App() {
             <button disabled={isActing || turn.diceRoll === null}
               aria-expanded={isTrading} aria-controls="bank-trade"
               onClick={() => {
-                setPlacement(null)
-                setCardChoice(null)
-                setActionError(null)
-                const give = RESOURCES.find(({ kind }) => resourceCount(kind) >= 4)?.kind ?? 'wood'
-                setTradeGive(give)
-                setTradeReceive(give === 'wood' ? 'brick' : 'wood')
-                setTradeContext(isTrading ? null : placementContext)
-              }}>Trade (4 for 1)</button>
+                if (isTrading) setTradeContext(null)
+                else openTrade(RESOURCES.find(
+                  ({ kind }) => resourceCount(kind) >= tradeRate(kind),
+                )?.kind ?? 'wood')
+              }}>Trade ({generalTradeRate} for 1)</button>
+            {RESOURCES.filter(({ kind }) => tradeRate(kind) === 2).map(({ kind, label }) => (
+              <button key={kind} disabled={isActing || turn.diceRoll === null}
+                aria-controls="bank-trade" onClick={() => openTrade(kind)}>
+                Trade {label} (2 for 1)
+              </button>
+            ))}
             <button className="end-turn" disabled={isActing || turn.diceRoll === null}
               onClick={() => void gameAction('end-turn')}>Next turn</button>
             </>}
@@ -693,8 +740,9 @@ function App() {
               event.preventDefault()
               void gameAction('trade', { give: tradeGive, receive: tradeReceive })
             }}>
-              <p>Exchange 4 matching resources for 1 of your choice.</p>
-              <label htmlFor="trade-give">Give 4</label>
+              <p>Exchange {tradeRate(tradeGive)} matching resources for 1 of your choice.
+                Your ports automatically apply the best rate.</p>
+              <label htmlFor="trade-give">Give {tradeRate(tradeGive)}</label>
               <select id="trade-give" value={tradeGive} disabled={isActing}
                 onChange={(event) => {
                   const resource = RESOURCES.find(({ kind }) => kind === event.target.value)
@@ -706,8 +754,8 @@ function App() {
                   }
                 }}>
                 {RESOURCES.map(({ kind, label }) => (
-                  <option key={kind} value={kind} disabled={resourceCount(kind) < 4}>
-                    {label} ({resourceCount(kind)} available)
+                  <option key={kind} value={kind} disabled={resourceCount(kind) < tradeRate(kind)}>
+                    {label} ({tradeRate(kind)} for 1; {resourceCount(kind)} available)
                   </option>
                 ))}
               </select>
@@ -721,9 +769,11 @@ function App() {
                   <option key={kind} value={kind} disabled={kind === tradeGive}>{label}</option>
                 ))}
               </select>
-              {resourceCount(tradeGive) < 4 && <p>You need at least 4 of one resource to trade.</p>}
+              {resourceCount(tradeGive) < tradeRate(tradeGive) && (
+                <p>You need at least {tradeRate(tradeGive)} {tradeGive} to trade.</p>
+              )}
               <button disabled={isActing || turn.diceRoll === null
-                || resourceCount(tradeGive) < 4 || tradeGive === tradeReceive}>Confirm trade</button>
+                || resourceCount(tradeGive) < tradeRate(tradeGive) || tradeGive === tradeReceive}>Confirm trade</button>
             </form>
           )}
           {isPlacing && <p className="placement-hint">Click a highlighted slot on the board.</p>}
@@ -740,11 +790,12 @@ function App() {
                 const recipient = game?.players.find((player) => player.id === message.recipientId)
                 const isOffer = message.recipientId !== null
                 return (
-                  <article className={`chat-message${isOffer ? ' trade-offer' : ''}`} key={message.id}>
-                    <p className="chat-message-author">
+                  <article className={`chat-message${isOffer ? ' trade-offer' : ''}${message.kind === 'action' ? ' action-log' : ''}`} key={message.id}
+                    style={message.kind === 'action' ? { color: sender?.color } : undefined}>
+                    {message.kind !== 'action' && <p className="chat-message-author">
                       {sender?.name ?? `Player ${message.senderId + 1}`}
                       {isOffer && <> offers {recipient?.name ?? `Player ${Number(message.recipientId) + 1}`}</>}
-                    </p>
+                    </p>}
                     {isOffer ? (
                       <>
                         <p className="offer-details">

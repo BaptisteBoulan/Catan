@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .game import Game
 
 from .enum import Resource, Color
+from .devCard import Knight
 
 class Player:
     def __init__(self, name: str, color: Color):
@@ -15,6 +16,10 @@ class Player:
         self.resources: list[Resource] = []
         self.devCards: list[DevCard] = []
         self.color: Color = color
+
+    @property
+    def knightsPlayed(self) -> int:
+        return sum(isinstance(card, Knight) and card.used for card in self.devCards)
         
     def getResourceCount(self, resource: Resource) -> int:
         return sum(1 for r in self.resources if r == resource)
@@ -42,7 +47,14 @@ class Player:
             "name": self.name,
             "color": self.color.value,
             "points": self.points,
+            "hasLongestRoad": game is not None and game.longestRoadHolder is self,
+            "hasLargestArmy": game is not None and game.largestArmyHolder is self,
+            "knightsPlayed": self.knightsPlayed,
             "resources": [resource.value for resource in self.resources],
+            "tradeRates": {
+                resource.value: game.tradeRate(self, resource) if game is not None else 4
+                for resource in Resource
+            },
             "devCards": [
                 {
                     "name": card.name, "color": card.color, "used": card.used,

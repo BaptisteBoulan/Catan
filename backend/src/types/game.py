@@ -1,4 +1,5 @@
 import random
+from datetime import datetime, timezone
 
 from .enum import BuildingType, Resource
 from .devCard import DevCard, Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint
@@ -51,6 +52,25 @@ class Game:
         self.devCardPlayed = False
         self.setupStep: int | None = None
         self.setupNode: Node | None = None
+        self.longestRoadHolder: Player | None = None
+        self.longestRoadLength = 0
+        self.largestArmyHolder: Player | None = None
+        self.chat: list[dict[str, object]] = []
+
+    def logAction(self, player: Player, description: str):
+        self.chat.append({
+            "id": len(self.chat),
+            "kind": "action",
+            "senderId": self.players.index(player),
+            "recipientId": None,
+            "text": f"{player.name} {description}.",
+            "give": None,
+            "giveCount": 0,
+            "receive": None,
+            "receiveCount": 0,
+            "status": None,
+            "createdAt": datetime.now(timezone.utc),
+        })
 
     def start(self):
         if self.started:
@@ -127,8 +147,17 @@ class Game:
             raise GameRuleError("The turn's dice have not been rolled yet.")
         if give == receive:
             raise GameRuleError("Choose a different resource to receive.")
-        if not BankTrade(self.players[playerIndex], self, give, receive).execute():
-            raise GameRuleError(f"Not enough resources (needs 4 {give.value}).")
+        action = BankTrade(self.players[playerIndex], self, give, receive)
+        if not action.execute():
+            raise GameRuleError(f"Not enough resources (needs {action.cost[give]} {give.value}).")
+
+    def tradeRate(self, player: Player, resource: Resource) -> int:
+        return min(
+            (3 if port.resource is None else 2
+             for port in self.board.ports
+             if port.owner is player and port.resource in (None, resource)),
+            default=4,
+        )
 
     def devCardUnavailableReason(self, playerIndex: int, card: DevCard) -> str | None:
         if card.used:
@@ -168,13 +197,94 @@ class Game:
             raise GameRuleError(f"{card.name} requires exactly {expected} resource choices.")
         card.play(player, self, resources)
         card.used = True
+        choices = f" ({', '.join(resource.value for resource in resources)})" if resources else ""
+        self.logAction(player, f"played {card.name}{choices}")
+        if isinstance(card, Knight):
+            self.updateLargestArmy(player)
         if not isinstance(card, VictoryPoint):
             self.devCardPlayed = True
+        self.checkVictory(player)
+
+    def updateLargestArmy(self, player: Player):
+        holder = self.largestArmyHolder
+        if player.knightsPlayed < 3 or holder is player:
+            return
+        if holder is not None and player.knightsPlayed <= holder.knightsPlayed:
+            return
+        if holder is not None:
+            holder.points -= 2
+        self.largestArmyHolder = player
+        player.points += 2
+        self.logAction(player, "was awarded Largest Army (+2 victory points)"
+                       + (f", taking it from {holder.name}" if holder is not None else ""))
         self.checkVictory(player)
 
     def checkVictory(self, player: Player):
         if self.winner is None and player.points >= WINNING_POINTS:
             self.winner = self.players.index(player)
+
+    def longestRoadThrough(self, road: Edge) -> int:
+        player = road.owner
+        if player is None:
+            return 0
+        seen = {road}
+
+        def extend(node: Node, otherEnd: Node | None = None) -> int:
+            longest = extend(otherEnd) if otherEnd is not None else 0
+            if node.owner is not None and node.owner is not player:
+                return longest
+            for edge in node.edges:
+                if edge.owner is not player or edge in seen:
+                    continue
+                seen.add(edge)
+                neighbor = edge.node2 if edge.node1 is node else edge.node1
+                longest = max(longest, 1 + extend(neighbor, otherEnd))
+                seen.remove(edge)
+            return longest
+
+        return 1 + extend(road.node1, road.node2)
+
+    def updateLongestRoad(self, road: Edge):
+        player = road.owner
+        length = self.longestRoadThrough(road)
+        if player is None or length < 5 or length <= self.longestRoadLength:
+            return
+        self.setLongestRoadHolder(player, length)
+
+    def setLongestRoadHolder(self, player: Player | None, length: int):
+        if self.longestRoadHolder is not player:
+            previous = self.longestRoadHolder
+            if previous is not None:
+                previous.points -= 2
+            self.longestRoadHolder = player
+            if player is not None:
+                player.points += 2
+                self.logAction(player, "was awarded Longest Road (+2 victory points)"
+                               + (f", taking it from {previous.name}" if previous is not None else ""))
+            elif previous is not None:
+                self.logAction(previous, "lost Longest Road (-2 victory points)")
+        self.longestRoadLength = length
+        if player is not None:
+            self.checkVictory(player)
+
+    def checkBrokenRoad(self, node: Node):
+        holder = self.longestRoadHolder
+        affected = {edge.owner for edge in node.edges
+                    if edge.owner is not None and edge.owner is not node.owner}
+        if not affected or (holder is not None and holder not in affected):
+            return
+        lengths = {player: max((self.longestRoadThrough(edge)
+                                for edge in self.board.edges if edge.owner is player), default=0)
+                   for player in self.players}
+        longest = max(lengths.values())
+        leaders = [player for player, length in lengths.items() if length == longest]
+        nextHolder = None
+        if longest >= 5:
+            if holder in leaders:
+                nextHolder = holder
+            elif len(leaders) == 1:
+                nextHolder = leaders[0]
+        self.setLongestRoadHolder(nextHolder, longest)
 
     def buildAction(self, playerIndex: int, kind: str) -> BuildRoad | BuildSettlement | BuildCity:
         self.requireTurn(playerIndex)
@@ -269,16 +379,24 @@ class Game:
 
     def setDevCardDeck(self):
         self.devCardDeck: list[DevCard] = [
+            Knight() for _ in range(14)
+        ] + [
             cardType()
             for _ in range(2)
-            for cardType in (Knight, RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint)
+            for cardType in (RoadBuilding, YearOfPlenty, Monopoly, VictoryPoint)
         ]
         random.shuffle(self.devCardDeck)
 
     def build(self, player: Player, node: Node, buildingType: BuildingType):
         node.building = buildingType
         node.owner = player
+        for port in self.board.ports:
+            if port.owner is None and node in (port.edge.node1, port.edge.node2):
+                port.owner = player
         player.points += BUILDING_POINTS[buildingType]
+        self.logAction(player, f"built a {buildingType.value}")
+        if buildingType == BuildingType.SETTLEMENT:
+            self.checkBrokenRoad(node)
         self.checkVictory(player)
         
     def runTurn(self, player: Player):
@@ -307,7 +425,6 @@ class Game:
                 else:
                     selected = action.chooseTarget(random.choice(action.getValidTargets()))
                 if selected and action.execute():
-                    print(f"{player.name} {action.description()}")
                     if self.winner is not None:
                         return
                     break
@@ -386,6 +503,15 @@ class Game:
                         "owner": ownerIndex(e.owner),
                     }
                     for e in self.board.edges
+                ],
+                "ports": [
+                    {
+                        "node1": port.edge.node1.id,
+                        "node2": port.edge.node2.id,
+                        "resource": None if port.resource is None else port.resource.value,
+                        "owner": ownerIndex(port.owner),
+                    }
+                    for port in self.board.ports
                 ],
             },
         }

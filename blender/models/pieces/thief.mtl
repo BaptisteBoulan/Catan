@@ -1,0 +1,15 @@
+# Catan thief materials
+
+newmtl tint
+Ka 0 0 0
+Kd 0.0500 0.0500 0.0500
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl tint_dark
+Ka 0 0 0
+Kd 0.0300 0.0300 0.0300
+Ks 0 0 0
+d 1
+illum 1

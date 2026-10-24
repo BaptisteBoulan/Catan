@@ -1,0 +1,29 @@
+# Catan brick materials
+
+newmtl plank
+Ka 0 0 0
+Kd 0.5800 0.3900 0.2200
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl post
+Ka 0 0 0
+Kd 0.3300 0.2100 0.1100
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl tint
+Ka 0 0 0
+Kd 0.9200 0.9000 0.8400
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl brick
+Ka 0 0 0
+Kd 0.6600 0.2000 0.1200
+Ks 0 0 0
+d 1
+illum 1

@@ -1,7 +1,7 @@
 import math
 import random
 
-from .enum import BuildingType, Landscape
+from .enum import BuildingType, Landscape, Resource
 from .player import Player
 
 SQRT3: float = 3 ** 0.5
@@ -32,6 +32,13 @@ class Edge:
         status = f"Road ({self.owner.name})" if self.owner else "Empty"
         return f"Edge [{status}] between ({self.node1.x:.2f}, {self.node1.y:.2f}) and ({self.node2.x:.2f}, {self.node2.y:.2f})"
 
+class Port:
+    def __init__(self, edge: Edge, resource: Resource | None):
+        self.edge = edge
+        self.resource = resource
+        self.owner: Player | None = None
+
+
 class Tile:
     def __init__(self, i: int, j: int, landscape: Landscape, diceNumber: int | None = None):
         self.i = i
@@ -60,7 +67,33 @@ class Board:
         self.tiles: list[Tile] = []
         self.nodesMap: dict[tuple[float, float], Node] = {}
         self.edges: list[Edge] = []
+        self.ports: list[Port] = []
         self.buildBoard()
+        self.buildPorts()
+
+    def buildPorts(self) -> None:
+        edgeCounts: dict[Edge, int] = {}
+        for tile in self.tiles:
+            for edge in tile.edges:
+                edgeCounts[edge] = edgeCounts.get(edge, 0) + 1
+        shore = sorted(
+            (edge for edge, count in edgeCounts.items() if count == 1),
+            key=lambda edge: math.atan2(edge.node1.y + edge.node2.y,
+                                        edge.node1.x + edge.node2.x),
+        )
+        # Leave at least two shore edges between ports, including around the seam.
+        count = min(9, len(shore) // 3)
+        if count == 0:
+            return
+        gaps = [3] * count
+        for _ in range(len(shore) - sum(gaps)):
+            gaps[random.randrange(count)] += 1
+        resources: list[Resource | None] = list(Resource) + [None] * 4
+        random.shuffle(resources)
+        index = random.randrange(len(shore))
+        for resource, gap in zip(resources[:count], gaps):
+            self.ports.append(Port(shore[index], resource))
+            index = (index + gap) % len(shore)
 
     def getOrCreateNode(self, x: float, y: float, tolerance: float = 1e-2) -> Node:
         """Ensures nodes that touch multiple tiles are shared instances."""

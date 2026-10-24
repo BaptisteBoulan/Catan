@@ -1,5 +1,13 @@
 import { mat4, vec3, type Mat4, type Vec3 } from "wgpu-matrix";
 
+export type CameraBounds = {
+    /** Lowest allowed camera height (world Y). */
+    minHeight: number;
+    /** Largest allowed distance from `center`. */
+    maxDistance: number;
+    center?: Vec3;
+};
+
 export type CameraOptions = {
     position?: Vec3;
     yaw?: number;
@@ -9,6 +17,7 @@ export type CameraOptions = {
     far?: number;
     speed?: number;
     sensitivity?: number;
+    bounds?: CameraBounds;
 };
 
 /**
@@ -26,6 +35,7 @@ export class Camera {
 
     speed: number;
     sensitivity: number;
+    bounds?: CameraBounds;
 
     private readonly up = vec3.fromValues(0, 1, 0);
     private readonly view = mat4.identity();
@@ -41,6 +51,8 @@ export class Camera {
         this.far = options.far ?? 100;
         this.speed = options.speed ?? 4;
         this.sensitivity = options.sensitivity ?? 0.002;
+        this.bounds = options.bounds;
+        this.clampPosition();
     }
 
     get forward(): Vec3 {
@@ -81,6 +93,23 @@ export class Camera {
             dir[2] /= horizontalLength;
         }
         vec3.addScaled(this.position, dir, this.speed * dt / 1000, this.position);
+        this.clampPosition();
+    }
+
+    /** Keeps the position above `bounds.minHeight` and within `bounds.maxDistance` of the center. */
+    clampPosition(): void {
+        if (!this.bounds) return;
+        const { minHeight, maxDistance, center = vec3.fromValues(0, 0, 0) } = this.bounds;
+        const offset = vec3.subtract(this.position, center);
+        offset[1] = Math.min(Math.max(offset[1], minHeight - center[1]), maxDistance);
+        // Shrink horizontally only, so the height limit still holds afterwards.
+        const maxHorizontal = Math.sqrt(Math.max(0, maxDistance ** 2 - offset[1] ** 2));
+        const horizontal = Math.hypot(offset[0], offset[2]);
+        if (horizontal > maxHorizontal) {
+            offset[0] *= maxHorizontal / horizontal;
+            offset[2] *= maxHorizontal / horizontal;
+        }
+        vec3.add(center, offset, this.position);
     }
 
     getViewMatrix(): Mat4 {

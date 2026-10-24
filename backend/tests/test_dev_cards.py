@@ -68,6 +68,7 @@ class DevCardTests(unittest.TestCase):
         game.players[1].resources = [Resource.WOOD] * 3 + [Resource.BRICK]
         game.players[2].resources = [Resource.WOOD, Resource.SHEEP]
         game.playDevCard(0, 0, [Resource.WOOD])
+        self.assertEqual(game.chat[-1]["text"], "Player 1 played Monopoly (wood).")
         self.assertEqual(game.players[0].resources, [Resource.ORE] + [Resource.WOOD] * 4)
         self.assertEqual(game.players[1].resources, [Resource.BRICK])
         self.assertEqual(game.players[2].resources, [Resource.SHEEP])
@@ -80,6 +81,8 @@ class DevCardTests(unittest.TestCase):
             player.resources = []
             game.playDevCard(0, 0, choices)
             self.assertEqual(player.resources, choices)
+            self.assertEqual(game.chat[-1]["text"],
+                             f"Player 1 played Year of Plenty ({', '.join(r.value for r in choices)}).")
 
     def test_victory_point_is_immediate_once_and_does_not_use_action_limit(self):
         game = self.normalGame()
@@ -159,6 +162,7 @@ class DevCardTests(unittest.TestCase):
                     game.playDevCard(player, index, resources)
                 self.assertFalse(card.used)
                 self.assertFalse(game.devCardPlayed)
+                self.assertFalse(any("played" in entry["text"] for entry in game.chat))
         game = Game()
         game.players[0].devCards = [VictoryPoint()]
         with self.assertRaises(GameRuleError):

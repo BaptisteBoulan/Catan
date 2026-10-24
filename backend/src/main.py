@@ -25,8 +25,11 @@ class GameSession:
     game: Game
     createdAt: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     lastSeen: dict[int, float] = field(default_factory=dict[int, float])
-    chat: list[dict[str, object]] = field(default_factory=list)
     replayLobby: bool = False
+
+    @property
+    def chat(self) -> list[dict[str, object]]:
+        return self.game.chat
 
     def players(self) -> list[dict[str, object]]:
         now = monotonic()
@@ -267,6 +270,7 @@ def sendChat(gameId: str, playerId: int, request: ChatRequest) -> dict[str, obje
         requirePlayer(session, playerId)
         message: dict[str, object] = {
             "id": len(session.chat),
+            "kind": "message",
             "senderId": playerId,
             "recipientId": request.recipientId,
             "text": request.text,
@@ -325,6 +329,8 @@ def decideTradeOffer(
                 recipient.resources.remove(receive)
             sender.resources.extend([receive] * receiveCount)
             recipient.resources.extend([give] * giveCount)
+            game.logAction(sender, f"exchanged {giveCount} {give.value} with {recipient.name}"
+                           f" for {receiveCount} {receive.value}")
         offer["status"] = "accepted" if decision == "accept" else "declined"
         return {"messages": session.chat, "state": sessionState(gameId, session)}
 
@@ -392,6 +398,7 @@ def replaceBoard(session: GameSession, request: NewBoardRequest) -> None:
     game = Game(playerCount=request.playerCount)
     for index in session.lastSeen:
         game.players[index].name = session.game.players[index].name
+    game.chat = session.chat
     session.game = game
 
 

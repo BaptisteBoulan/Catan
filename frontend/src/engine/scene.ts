@@ -6,6 +6,8 @@ import { SceneObject } from "./scene-object";
 export class Scene {
     readonly root = new SceneObject({ name: "root" });
     camera: Camera;
+    /** Equirectangular Radiance (.hdr) image used as background and ambient light. */
+    environmentUrl?: string;
 
     private time = 0;
 

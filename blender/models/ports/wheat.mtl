@@ -1,0 +1,36 @@
+# Catan wheat materials
+
+newmtl plank
+Ka 0 0 0
+Kd 0.5800 0.3900 0.2200
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl post
+Ka 0 0 0
+Kd 0.3300 0.2100 0.1100
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl tint
+Ka 0 0 0
+Kd 0.9200 0.9000 0.8400
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl sack
+Ka 0 0 0
+Kd 0.8600 0.7600 0.5200
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl wheat
+Ka 0 0 0
+Kd 0.9600 0.8000 0.2800
+Ks 0 0 0
+d 1
+illum 1

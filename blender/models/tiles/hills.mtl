@@ -1,0 +1,29 @@
+# Catan hills materials
+
+newmtl ground
+Ka 0 0 0
+Kd 0.7200 0.4300 0.2400
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl cliff
+Ka 0 0 0
+Kd 0.4500 0.2700 0.1600
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl clay
+Ka 0 0 0
+Kd 0.8000 0.4800 0.2700
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl brick
+Ka 0 0 0
+Kd 0.6600 0.2000 0.1200
+Ks 0 0 0
+d 1
+illum 1

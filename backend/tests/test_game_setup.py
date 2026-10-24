@@ -145,6 +145,8 @@ class GameSetupTests(unittest.TestCase):
         game = Game(1)
         game.start()
         self.completeSetup(game)
+        for port in game.board.ports:
+            port.owner = None
         player = game.players[0]
         for give in Resource:
             for receive in Resource:
@@ -169,6 +171,8 @@ class GameSetupTests(unittest.TestCase):
             game.trade(0, Resource.WOOD, Resource.ORE)
         with patch.object(game, "throwDice", return_value=7):
             self.completeSetup(game)
+        for port in game.board.ports:
+            port.owner = None
         for operation in (
             lambda: game.trade(1, Resource.WOOD, Resource.ORE),
             lambda: game.trade(0, Resource.WOOD, Resource.WOOD),

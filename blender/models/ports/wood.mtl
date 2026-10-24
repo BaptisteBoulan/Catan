@@ -1,0 +1,36 @@
+# Catan wood materials
+
+newmtl plank
+Ka 0 0 0
+Kd 0.5800 0.3900 0.2200
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl post
+Ka 0 0 0
+Kd 0.3300 0.2100 0.1100
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl tint
+Ka 0 0 0
+Kd 0.9200 0.9000 0.8400
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl log
+Ka 0 0 0
+Kd 0.5000 0.3200 0.1600
+Ks 0 0 0
+d 1
+illum 1
+
+newmtl log_end
+Ka 0 0 0
+Kd 0.7800 0.6200 0.4000
+Ks 0 0 0
+d 1
+illum 1
