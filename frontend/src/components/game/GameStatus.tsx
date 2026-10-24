@@ -7,6 +7,8 @@ export function GameStatus({ controller, location }: GameViewProps) {
     game, players, isActing, observationMode, setObservationMode, gameAction,
     currentPlayer, turn, turnPlayer, winner, isMyTurn, emptySlots, isHost,
   } = controller
+  setObservationMode(false);
+  console.log((observationMode) ? "We are in observation mode" : "We are not in observation mode");
   return (
     <>
       <h1>Game {location.gameId}</h1>
@@ -24,11 +26,11 @@ export function GameStatus({ controller, location }: GameViewProps) {
           <p>Players ({players.length}/{game.players.length})</p>
           {isHost ? (
             <>
-            <label>
+            {/* <label>
               <input type="checkbox" checked={observationMode} disabled={isActing}
                 onChange={(event) => setObservationMode(event.target.checked)} />
               Observation mode (automate every player)
-            </label>
+            </label> */}
             <button disabled={isActing} onClick={() => void gameAction('start')}>
               {emptySlots > 0 ? 'Start with AI players' : 'Start game'}
             </button>

@@ -1,4 +1,5 @@
 import type { useLobby } from '../../hooks/useLobby'
+import { LobbyBackdrop } from './LobbyBackdrop'
 
 const MIN_PLAYERS = 1
 const MAX_PLAYERS = 5
@@ -7,6 +8,7 @@ export function Lobby({ lobby }: { lobby: ReturnType<typeof useLobby> }) {
   const { name, setName, joinId, setJoinId, playerCount, setPlayerCount, isSubmitting, error, enterGame } = lobby
   return (
     <main className="lobby">
+      <LobbyBackdrop />
       <section className="lobby-card">
         <h1>Catan</h1>
         <label htmlFor="player-name">Your name (optional)</label>

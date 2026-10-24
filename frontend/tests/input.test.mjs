@@ -161,3 +161,16 @@ test('keyboard remains scoped to the canvas and disposing removes listeners', (t
   assert.equal(input.isDown('KeyW'), false)
   assert.deepEqual(input.mouseDelta, [0, 0])
 })
+
+test('any page interaction marks the frame as active until it ends', (t) => {
+  const { window, input, emit } = fixture(t)
+  assert.equal(input.active, false)
+  emit(window, 'pointerdown')
+  assert.equal(input.active, true)
+  input.endFrame()
+  assert.equal(input.active, false)
+  emit(window, 'keydown', { code: 'KeyA' })
+  assert.equal(input.active, true)
+  input.endFrame()
+  assert.equal(input.active, false)
+})

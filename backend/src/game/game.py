@@ -90,6 +90,17 @@ class Game:
                 self.players[self.currentPlayer].playTurn(self)
         self.advanceAiPlayers()
 
+    @classmethod
+    def createAiDemo(cls, playerCount: int = MAX_PLAYERS) -> "Game":
+        """An all-AI game advanced one placement or turn at a time with `nextObservedTurn`."""
+        game = cls(playerCount)
+        game.fillAiPlayers(set())
+        # Same as `start(observationMode=True)`, minus the human requirement and the batched setup.
+        game.started = True
+        game.setupStep = 0
+        game.observationMode = True
+        return game
+
     def fillAiPlayers(self, humanPlayerIds: set[int]) -> None:
         if self.started:
             raise GameRuleError("The game has already started.")

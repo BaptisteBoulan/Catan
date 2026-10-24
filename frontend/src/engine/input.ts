@@ -8,6 +8,7 @@ export class Input {
     private panDx = 0;
     private panDy = 0;
     private wheel = 0;
+    private activity = false;
     private readonly canvas: HTMLCanvasElement;
     private readonly abort = new AbortController();
 
@@ -73,6 +74,11 @@ export class Input {
             if (event.code === "Space") event.preventDefault();
         }, { signal });
         window.addEventListener("keyup", (event) => this.keys.delete(event.code), { signal });
+        // Any interaction with the page, not only the canvas, counts as user activity.
+        const markActive = () => { this.activity = true; };
+        for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) {
+            window.addEventListener(type, markActive, { signal, capture: true, passive: true });
+        }
         const reset = () => {
             pressed = undefined;
             dragged = true;
@@ -101,6 +107,12 @@ export class Input {
         return Math.max(1, this.canvas.getBoundingClientRect().height);
     }
 
+    /** Whether the user interacted with the page (or is holding a key) since the previous frame. */
+    get active(): boolean {
+        return this.activity || this.keys.size > 0
+            || this.mouseDx !== 0 || this.mouseDy !== 0 || this.panDx !== 0 || this.panDy !== 0 || this.wheel !== 0;
+    }
+
     isDown(code: string): boolean {
         return this.keys.has(code);
     }
@@ -117,6 +129,7 @@ export class Input {
         this.panDx = 0;
         this.panDy = 0;
         this.wheel = 0;
+        this.activity = false;
     }
 
     dispose(): void {

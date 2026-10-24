@@ -48,6 +48,9 @@ class GameSession:
 
 
 games: dict[str, GameSession] = {}
+# Lobby backdrop games, oldest first; abandoned ones are evicted beyond the cap.
+previews: dict[str, Game] = {}
+MAX_PREVIEWS = 50
 gamesLock = RLock()
 
 
@@ -147,7 +150,32 @@ def claimPlayer(session: GameSession, name: str) -> int:
 def resetGames():
     with gamesLock:
         games.clear()
+        previews.clear()
     return {"status": "ok"}
+
+@app.post("/previews", status_code=201)
+def createPreview() -> dict[str, object]:
+    with gamesLock:
+        previewId = secrets.token_urlsafe(8)
+        previews[previewId] = Game.createAiDemo(MAX_PLAYERS)
+        while len(previews) > MAX_PREVIEWS:
+            del previews[next(iter(previews))]
+        return {"previewId": previewId, "game": previews[previewId].serialize()}
+
+
+@app.post("/previews/{previewId}/step")
+def stepPreview(previewId: str) -> dict[str, object]:
+    with gamesLock:
+        game = previews.get(previewId)
+        if game is None:
+            raise HTTPException(status_code=404, detail="Preview not found.")
+        if game.winner is None:
+            applyRule(game.nextObservedTurn)
+        if game.winner is not None:
+            # Finished previews are never stepped again.
+            del previews[previewId]
+        return {"previewId": previewId, "game": game.serialize()}
+
 
 @app.post("/games", status_code=201)
 def createGame(request: CreateGameRequest) -> dict[str, object]:

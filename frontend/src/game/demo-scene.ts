@@ -1,6 +1,7 @@
 import { vec3, type Vec3 } from "wgpu-matrix";
 import { Camera } from "../engine/camera";
 import { FlyCameraController } from "../engine/controllers/fly-camera-controller";
+import { IdleOrbitController, type IdleOrbitOptions } from "../engine/controllers/idle-orbit-controller";
 import { Scene } from "../engine/scene";
 import { SceneObject } from "../engine/scene-object";
 import { Mesh } from "../engine/mesh/mesh";
@@ -30,6 +31,7 @@ const sqrt3 = Math.sqrt(3);
 const TILE_HEIGHT = 0.15;
 /** Models rest on their origin; pieces stand on the tiles' top surface. */
 const BOARD_TOP = TILE_HEIGHT / 2;
+const THIEF_OFFSET = 0.35;
 const PORT_OFFSET = 0.28;
 
 export const CAMERA_MIN_HEIGHT = 0.5;
@@ -50,6 +52,10 @@ function addHexTile(parent: SceneObject, i: number, j: number, landscape: number
     }));
 }
 
+function thiefPosition(i: number, j: number) {
+    return vec3.fromValues(i * 1.5 + THIEF_OFFSET, BOARD_TOP, (j + i / 2) * sqrt3);
+}
+
 type SceneEntry = { signature: string; object: SceneObject };
 type SceneUpdate = {
     signature: string;
@@ -66,16 +72,25 @@ function destroyObject(object: SceneObject): void {
     for (const geometry of geometries) geometry.destroy();
 }
 
+export type GameSceneOptions = {
+    /** Whether the user can steer the camera. */
+    interactive?: boolean;
+    idleOrbit?: IdleOrbitOptions;
+    cameraPosition?: Vec3;
+};
+
 export class GameScene extends Scene {
     private readonly entries = new Map<string, SceneEntry>();
     private revision = 0;
 
-    constructor() {
+    constructor({ interactive = true, idleOrbit, cameraPosition }: GameSceneOptions = {}) {
         super(new Camera({
+            position: cameraPosition,
             bounds: { minHeight: CAMERA_MIN_HEIGHT, maxDistance: CAMERA_MAX_DISTANCE },
         }));
         this.environmentUrl = ENVIRONMENT_URL;
-        this.add(new FlyCameraController());
+        if (interactive) this.add(new FlyCameraController());
+        this.add(new IdleOrbitController(idleOrbit));
     }
 
     async sync(game: GameDto, signal?: AbortSignal, placement?: Placement): Promise<void> {
@@ -125,6 +140,15 @@ export class GameScene extends Scene {
 
 export function createDemoScene(): GameScene {
     return new GameScene();
+}
+
+/** Non-interactive scene that keeps turning, used behind the lobby. */
+export function createPreviewScene(): GameScene {
+    return new GameScene({
+        interactive: false,
+        idleOrbit: { idleDelay: null, speed: 0.08 },
+        cameraPosition: vec3.fromValues(0, 2.6, 6),
+    });
 }
 
 async function createTerrain({ board }: GameDto, signal?: AbortSignal): Promise<SceneObject> {
@@ -183,11 +207,10 @@ function describeObjects(
     });
     board.tiles.forEach((tile, index) => {
         if (!tile.isOccupiedByThief) return;
-        const x = tile.i * 1.5;
-        const z = (tile.j + tile.i / 2) * sqrt3;
+        const position = thiefPosition(tile.i, tile.j);
         updates.set(`thief:${index}`, {
-            signature: JSON.stringify([x, z]),
-            create: () => new Thief({ position: vec3.fromValues(x, BOARD_TOP, z) }),
+            signature: JSON.stringify(position),
+            create: () => new Thief({ position }),
         });
     });
     const nodesById = new Map(board.nodes.map((node) => [node.id, node]));
@@ -265,13 +288,12 @@ function describeObjects(
         if (placement.kind === 'thief') {
             const tile = board.tiles[target];
             if (!tile) throw new Error(`Invalid thief slot ${target}`);
-            const x = tile.i * 1.5;
-            const z = (tile.j + tile.i / 2) * sqrt3;
+            const position = thiefPosition(tile.i, tile.j);
             updates.set(`preview:thief:${target}`, {
-                signature: JSON.stringify([x, z]),
+                signature: JSON.stringify(position),
                 create: () => {
                     const preview = new Thief({
-                        position: vec3.fromValues(x, BOARD_TOP, z),
+                        position,
                         color: vec3.fromValues(0.5, 0.5, 0.5),
                     });
                     preview.pickRadius = 0.45;
